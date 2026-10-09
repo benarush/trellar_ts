@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { evaluateConfidence, ObservabilityMode } from "../src/index.js";
-import { getAgentGuard } from "../src/langchain.js";
-import { isGuardActive } from "../src/context.js";
+import { trellarLangchainAgent } from "../src/langchain.js";
+import { isTrellarAgentActive } from "../src/context.js";
 import { ScriptedChatModel } from "./fakeChatModel.js";
 import { assertValidAgentLoopRequest, mockFetch, useCleanEnv } from "./helpers.js";
 
@@ -65,8 +65,8 @@ function buildGraph(options: { delayMs?: number; onGate?: () => Promise<unknown>
 describe("LangGraph end to end", () => {
   it("captures the whole network and sends a backend-valid payload from a gate node", async () => {
     const calls = mockFetch();
-    const guard = getAgentGuard("e2e-agent");
-    const result = await buildGraph().invoke({ messages: [new HumanMessage("buy cars")] }, { callbacks: [guard] });
+    const trellarAgent = trellarLangchainAgent("e2e-agent");
+    const result = await buildGraph().invoke({ messages: [new HumanMessage("buy cars")] }, { callbacks: [trellarAgent] });
 
     expect(result.score).toBe(8);
     expect(calls).toHaveLength(1);
@@ -113,18 +113,18 @@ describe("LangGraph end to end", () => {
     expect(events.some((e) => e.langgraph_step === 1)).toBe(true);
   });
 
-  it("releases the guard after invoke() so a late evaluateConfidence throws", async () => {
+  it("releases the Trellar agent after invoke() so a late evaluateConfidence throws", async () => {
     mockFetch();
-    const guard = getAgentGuard("late");
-    await buildGraph().invoke({ messages: [new HumanMessage("x")] }, { callbacks: [guard] });
-    expect(isGuardActive(guard)).toBe(false);
+    const trellarAgent = trellarLangchainAgent("late");
+    await buildGraph().invoke({ messages: [new HumanMessage("x")] }, { callbacks: [trellarAgent] });
+    expect(isTrellarAgentActive(trellarAgent)).toBe(false);
     await expect(evaluateConfidence({ apiKey: "k" })).rejects.toThrow(/No active callback handler/);
   });
 
   it("ALWAYS mode auto-evaluates at the end with the full run and an observability flag", async () => {
     const calls = mockFetch();
-    const guard = getAgentGuard("auto", ObservabilityMode.ALWAYS);
-    await buildGraph().invoke({ messages: [new HumanMessage("x")] }, { callbacks: [guard] });
+    const trellarAgent = trellarLangchainAgent("auto", ObservabilityMode.ALWAYS);
+    await buildGraph().invoke({ messages: [new HumanMessage("x")] }, { callbacks: [trellarAgent] });
     // gate (manual) + automatic end-of-run call
     expect(calls.map((c) => c.body.observability_call)).toEqual([false, true]);
     const autoBody = calls[1]!.body;
@@ -134,17 +134,17 @@ describe("LangGraph end to end", () => {
 
   it("IF_NOT_EVALUATED skips the automatic call after a successful manual one", async () => {
     const calls = mockFetch();
-    const guard = getAgentGuard("auto2", ObservabilityMode.IF_NOT_EVALUATED);
-    await buildGraph().invoke({ messages: [new HumanMessage("x")] }, { callbacks: [guard] });
+    const trellarAgent = trellarLangchainAgent("auto2", ObservabilityMode.IF_NOT_EVALUATED);
+    await buildGraph().invoke({ messages: [new HumanMessage("x")] }, { callbacks: [trellarAgent] });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.body.observability_call).toBe(false);
   });
 
   it("auto-evaluate failures never break invoke()", async () => {
     mockFetch({ detail: "down" }, 500, "Server Error");
-    const guard = getAgentGuard("auto3", ObservabilityMode.ALWAYS);
+    const trellarAgent = trellarLangchainAgent("auto3", ObservabilityMode.ALWAYS);
     const graph = buildGraph({ onGate: async () => ({ score: 1 }) });
-    const result = await graph.invoke({ messages: [new HumanMessage("x")] }, { callbacks: [guard] });
+    const result = await graph.invoke({ messages: [new HumanMessage("x")] }, { callbacks: [trellarAgent] });
     expect(result.score).toBe(1);
   });
 });
@@ -152,7 +152,7 @@ describe("LangGraph end to end", () => {
 describe("registerTools", () => {
   it("reports descriptions of directly-invoked tools (JS does not serialize them)", async () => {
     mockFetch();
-    const guard = getAgentGuard("direct").registerTools([buyTool]);
+    const trellarAgent = trellarLangchainAgent("direct").registerTools([buyTool]);
     const graph = new StateGraph(MessagesAnnotation)
       .addNode("buy", async (_state, config) => {
         await buyTool.invoke({ symbols: "F" }, config);
@@ -161,30 +161,30 @@ describe("registerTools", () => {
       .addEdge(START, "buy")
       .addEdge("buy", END)
       .compile();
-    await graph.invoke({ messages: [] }, { callbacks: [guard] });
-    const start = (guard.events as any[]).find((e) => e.event === "on_tool_start");
+    await graph.invoke({ messages: [] }, { callbacks: [trellarAgent] });
+    const start = (trellarAgent.events as any[]).find((e) => e.event === "on_tool_start");
     expect(start).toMatchObject({ tool: "buy_stocks", tool_description: "Execute buy orders" });
   });
 
   it("without registration a directly-invoked tool has no description", async () => {
     mockFetch();
-    const guard = getAgentGuard("direct2");
-    await buyTool.invoke({ symbols: "F" }, { callbacks: [guard] });
-    const start = (guard.events as any[]).find((e) => e.event === "on_tool_start");
+    const trellarAgent = trellarLangchainAgent("direct2");
+    await buyTool.invoke({ symbols: "F" }, { callbacks: [trellarAgent] });
+    const start = (trellarAgent.events as any[]).find((e) => e.event === "on_tool_start");
     expect(start.tool_description).toBeNull();
   });
 });
 
 describe("concurrent runs are isolated (Python ContextVar equivalent)", () => {
-  it("each parallel invoke() evaluates its own guard", async () => {
+  it("each parallel invoke() evaluates its own Trellar agent", async () => {
     const calls = mockFetch();
     const names = ["run-a", "run-b", "run-c"];
-    const guards = names.map((n) => getAgentGuard(n));
+    const trellarAgents = names.map((n) => trellarLangchainAgent(n));
     await Promise.all(
-      guards.map((guard, i) =>
+      trellarAgents.map((trellarAgent, i) =>
         buildGraph({ delayMs: 15 * (3 - i) }).invoke(
           { messages: [new HumanMessage(`task ${names[i]}`)] },
-          { callbacks: [guard] },
+          { callbacks: [trellarAgent] },
         ),
       ),
     );
@@ -192,14 +192,14 @@ describe("concurrent runs are isolated (Python ContextVar equivalent)", () => {
     expect(calls).toHaveLength(3);
     for (const call of calls) {
       const body = call.body;
-      const guard = guards.find((g) => g.agentName === body.agent_name)!;
-      expect(body.trace_id).toBe(guard.traceId);
+      const trellarAgent = trellarAgents.find((g) => g.agentName === body.agent_name)!;
+      expect(body.trace_id).toBe(trellarAgent.traceId);
       // No cross-talk: every event belongs to this run and mentions only this run's task.
       expect(body.context.every((e: any) => e.trace_id === body.trace_id)).toBe(true);
       const human = body.context.find((e: any) => e.event === "on_chat_model_start").input.human;
       expect(human).toBe(`task ${body.agent_name}`);
     }
     expect(new Set(calls.map((c) => c.body.agent_name)).size).toBe(3);
-    expect(guards.every((g) => !isGuardActive(g))).toBe(true);
+    expect(trellarAgents.every((g) => !isTrellarAgentActive(g))).toBe(true);
   });
 });

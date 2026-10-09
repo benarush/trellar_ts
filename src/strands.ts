@@ -1,15 +1,16 @@
 /**
- * Strands Agents guards. Requires ``@strands-agents/sdk`` >= 1.19 (Node 22+).
+ * Strands Agents. Requires ``@strands-agents/sdk`` >= 1.19 (Node 22+).
  *
  * ```ts
- * import { getStrandsGuard } from "trellar/strands";
+ * import { trellarStrandsAgent } from "trellar/strands";
  * import { evaluateConfidence } from "trellar";
  * ```
  */
 import { ObservabilityMode } from "./agentLoop.js";
+import { deprecatedAlias } from "./deprecation.js";
 import {
-  StrandsGuardCallback,
-  StrandsSingleCallGuardCallback,
+  StrandsAgentCallback,
+  StrandsSingleCallCallback,
 } from "./callbacks/strands/strandsCallback.js";
 
 export {
@@ -20,34 +21,34 @@ export {
   type AgentLoopResult,
   type EvaluateConfidenceOptions,
 } from "./agentLoop.js";
-export { runWithGuard } from "./context.js";
-export type { StrandsGuardCallback, StrandsSingleCallGuardCallback };
+export { runWithTrellarAgent, runWithGuard } from "./context.js";
+export type { StrandsAgentCallback, StrandsSingleCallCallback };
 
 /**
  * Create a plugin that identifies a Strands Agents network to Trellar.
  *
- * Register the same guard on every Agent and on the Graph/Swarm (so the whole
+ * Register the same Trellar agent on every Agent and on the Graph/Swarm (so the whole
  * run is one trace):
  *
  * ```ts
- * const guard = getStrandsGuard("research-agent");
+ * const trellarAgent = trellarStrandsAgent("research-agent");
  *
- * const agent = new Agent({ name: "searcher", plugins: [guard] });
- * const graph = new Graph({ nodes: [...], edges: [...], plugins: [guard] });
+ * const agent = new Agent({ name: "searcher", plugins: [trellarAgent] });
+ * const graph = new Graph({ nodes: [...], edges: [...], plugins: [trellarAgent] });
  * ```
  *
  * Give every agent a stable ``name``: it is how the backend tells agents apart.
- * As with ``getAgentGuard``, call ``evaluateConfidence`` from inside the run
+ * As with ``trellarLangchainAgent``, call ``evaluateConfidence`` from inside the run
  * (e.g. a graph node or a tool), not after it returns.
  *
  * @param agentName Unique, stable name for this agent network.
  * @param observabilityMode See ``ObservabilityMode``.
  */
-export function getStrandsGuard(
+export function trellarStrandsAgent(
   agentName: string,
   observabilityMode: ObservabilityMode = ObservabilityMode.NONE,
-): StrandsGuardCallback {
-  return new StrandsGuardCallback({ agentName, observabilityMode });
+): StrandsAgentCallback {
+  return new StrandsAgentCallback({ agentName, observabilityMode });
 }
 
 /**
@@ -55,22 +56,32 @@ export function getStrandsGuard(
  *
  * The run is over when the call returns, so a manual ``evaluateConfidence`` is
  * not possible. Use ``ObservabilityMode.ALWAYS`` (or ``IF_NOT_EVALUATED``) and
- * read the outcome off the guard:
+ * read the outcome off the Trellar agent:
  *
  * ```ts
- * const guard = getStrandsSingleCallGuard("faq-agent", ObservabilityMode.ALWAYS);
- * const agent = new Agent({ name: "faq", plugins: [guard] });
+ * const trellarAgent = trellarStrandsSingleCall("faq-agent", ObservabilityMode.ALWAYS);
+ * const agent = new Agent({ name: "faq", plugins: [trellarAgent] });
  * await agent.invoke("What time does the office open?");
- * const result = guard.trellarEvaluateResult;
+ * const result = trellarAgent.trellarEvaluateResult;
  * ```
  *
  * Requests are marked ``single_call: true`` in the payload. Not covered:
  * ``agent.structuredOutput()`` and calling a Strands ``Model`` directly
  * (Strands fires no model-call hooks for them).
  */
-export function getStrandsSingleCallGuard(
+export function trellarStrandsSingleCall(
   agentName: string,
   observabilityMode: ObservabilityMode = ObservabilityMode.NONE,
-): StrandsSingleCallGuardCallback {
-  return new StrandsSingleCallGuardCallback({ agentName, observabilityMode });
+): StrandsSingleCallCallback {
+  return new StrandsSingleCallCallback({ agentName, observabilityMode });
 }
+
+/** @deprecated Use {@link trellarStrandsAgent}. */
+export const getStrandsGuard = deprecatedAlias("getStrandsGuard", "trellarStrandsAgent", trellarStrandsAgent);
+
+/** @deprecated Use {@link trellarStrandsSingleCall}. */
+export const getStrandsSingleCallGuard = deprecatedAlias(
+  "getStrandsSingleCallGuard",
+  "trellarStrandsSingleCall",
+  trellarStrandsSingleCall,
+);

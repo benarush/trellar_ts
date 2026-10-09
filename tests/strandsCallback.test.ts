@@ -1,5 +1,5 @@
 /**
- * Tests for the Strands guard, driven through real Strands Agents / Graphs with a
+ * Tests for the Strands Trellar agent, driven through real Strands Agents / Graphs with a
  * scripted fake model (no network). Every recorded payload is validated against a
  * mirror of the backend schema.
  */
@@ -19,10 +19,10 @@ import { z } from "zod";
 
 import * as agentLoop from "../src/agentLoop.js";
 import { llmHumanInput } from "../src/callbacks/strands/utils/index.js";
-import { isGuardActive } from "../src/context.js";
+import { isTrellarAgentActive } from "../src/context.js";
 import { evaluateConfidence, ObservabilityMode } from "../src/index.js";
-import { getStrandsGuard, getStrandsSingleCallGuard } from "../src/strands.js";
-import type { StrandsGuardCallback } from "../src/callbacks/strands/strandsCallback.js";
+import { trellarStrandsAgent, trellarStrandsSingleCall } from "../src/strands.js";
+import type { StrandsAgentCallback } from "../src/callbacks/strands/strandsCallback.js";
 import { assertValidAgentLoopRequest, mockFetch, useCleanEnv } from "./helpers.js";
 import { FakeModel, type Turn } from "./strandsFactories.js";
 
@@ -46,11 +46,11 @@ const boom = tool({
 
 const text = (t: string): Turn => ({ text: t });
 const toolTurn = (name: string, input: Record<string, unknown>): Turn => ({ toolUse: { name, input } });
-const eventsOf = (guard: StrandsGuardCallback, kind: string): any[] => guard.events.filter((e) => e["event"] === kind);
+const eventsOf = (trellarAgent: StrandsAgentCallback, kind: string): any[] => trellarAgent.events.filter((e) => e["event"] === kind);
 
 let agentCounter = 0;
 function makeAgent(
-  guard: StrandsGuardCallback,
+  trellarAgent: StrandsAgentCallback,
   turns: Turn[],
   options: { name?: string; tools?: any[]; systemPrompt?: string } = {},
 ): Agent {
@@ -61,20 +61,20 @@ function makeAgent(
     name,
     model: new FakeModel(turns),
     tools: options.tools ?? [],
-    plugins: [guard],
+    plugins: [trellarAgent],
     systemPrompt: options.systemPrompt ?? "You are a calculator.",
     printer: false,
   });
 }
 
-function assertBackendAccepts(guard: StrandsGuardCallback): void {
+function assertBackendAccepts(trellarAgent: StrandsAgentCallback): void {
   assertValidAgentLoopRequest({
-    context: guard.events,
-    trace_id: guard.traceId,
-    agent_name: guard.agentName,
+    context: trellarAgent.events,
+    trace_id: trellarAgent.traceId,
+    agent_name: trellarAgent.agentName,
     observability_call: false,
     single_call: false,
-    available_tools: Object.entries(guard.availableTools).map(([hash, tools]) => ({ tools_hash: hash, tools })),
+    available_tools: Object.entries(trellarAgent.availableTools).map(([hash, tools]) => ({ tools_hash: hash, tools })),
   });
 }
 
@@ -96,17 +96,17 @@ class FunctionNode extends Node {
 
 describe("construction", () => {
   it("requires an agent name", () => {
-    expect(() => getStrandsGuard("  ")).toThrow(/agent_name is required/);
-    expect(() => getStrandsSingleCallGuard("")).toThrow(/agent_name is required/);
+    expect(() => trellarStrandsAgent("  ")).toThrow(/agent_name is required/);
+    expect(() => trellarStrandsSingleCall("")).toThrow(/agent_name is required/);
   });
 });
 
 describe("single agent", () => {
   it("records the tool-run event sequence with parent links", async () => {
-    const guard = getStrandsGuard("t");
-    await makeAgent(guard, [toolTurn("add", { a: 1, b: 2 }), text("3")], { tools: [add] }).invoke("what is 1+2?");
+    const trellarAgent = trellarStrandsAgent("t");
+    await makeAgent(trellarAgent, [toolTurn("add", { a: 1, b: 2 }), text("3")], { tools: [add] }).invoke("what is 1+2?");
 
-    expect(guard.events.map((e) => e["event"])).toEqual([
+    expect(trellarAgent.events.map((e) => e["event"])).toEqual([
       "on_chain_start",
       "on_chat_model_start",
       "on_llm_end",
@@ -116,65 +116,65 @@ describe("single agent", () => {
       "on_llm_end",
       "on_chain_end",
     ]);
-    expect(guard.events.map((e) => e["graph_order"])).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    const root = guard.events[0]!;
+    expect(trellarAgent.events.map((e) => e["graph_order"])).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    const root = trellarAgent.events[0]!;
     expect(root).toMatchObject({ node_name: "calc", parent_run_id: null, inputs: ["what is 1+2?"] });
-    expect(guard.traceId).toBe(root["run_id"]);
-    for (const e of guard.events.slice(1, -1)) expect(e["parent_run_id"]).toBe(root["run_id"]);
-    assertBackendAccepts(guard);
+    expect(trellarAgent.traceId).toBe(root["run_id"]);
+    for (const e of trellarAgent.events.slice(1, -1)) expect(e["parent_run_id"]).toBe(root["run_id"]);
+    assertBackendAccepts(trellarAgent);
   });
 
   it("records the model name and system/human input", async () => {
-    const guard = getStrandsGuard("t");
-    await makeAgent(guard, [text("hi")], { systemPrompt: "Be brief." }).invoke("hello there");
-    const start = eventsOf(guard, "on_chat_model_start")[0];
+    const trellarAgent = trellarStrandsAgent("t");
+    await makeAgent(trellarAgent, [text("hi")], { systemPrompt: "Be brief." }).invoke("hello there");
+    const start = eventsOf(trellarAgent, "on_chat_model_start")[0];
     expect(start.model).toBe("fake-model");
     expect(start.input).toEqual({ system: "Be brief.", human: "hello there" });
     expect(start.tools_hash).toBeNull();
   });
 
   it("folds multi-turn history into the human input", async () => {
-    const guard = getStrandsGuard("t");
-    const agent = makeAgent(guard, [text("Hello! How can I help?"), text("KAN-5 details")], {
+    const trellarAgent = trellarStrandsAgent("t");
+    const agent = makeAgent(trellarAgent, [text("Hello! How can I help?"), text("KAN-5 details")], {
       systemPrompt: "Be brief.",
     });
     await agent.invoke("hello");
     await agent.invoke("give me details about KAN-5");
 
-    const starts = eventsOf(guard, "on_chat_model_start");
-    expect(starts).toHaveLength(1); // the guard resets per root run
+    const starts = eventsOf(trellarAgent, "on_chat_model_start");
+    expect(starts).toHaveLength(1); // the trellarAgent resets per root run
     expect(starts[0].input.human).toBe(
       "Human: hello\nAI LLM: Hello! How can I help?\n\nCurrent message - give me details about KAN-5",
     );
   });
 
   it("folds tool events and responses into the LLM event", async () => {
-    const guard = getStrandsGuard("t");
-    await makeAgent(guard, [toolTurn("add", { a: 1, b: 2 }), text("3")], { tools: [add] }).invoke("1+2?");
+    const trellarAgent = trellarStrandsAgent("t");
+    await makeAgent(trellarAgent, [toolTurn("add", { a: 1, b: 2 }), text("3")], { tools: [add] }).invoke("1+2?");
 
-    const toolStart = eventsOf(guard, "on_tool_start")[0];
+    const toolStart = eventsOf(trellarAgent, "on_tool_start")[0];
     expect(toolStart).toMatchObject({ tool: "add", tool_description: "Add two numbers.", input: { a: 1, b: 2 } });
     expect(toolStart.invoked_by_run_id).toBe(toolStart.parent_run_id);
 
-    const toolEnd = eventsOf(guard, "on_tool_end")[0];
+    const toolEnd = eventsOf(trellarAgent, "on_tool_end")[0];
     expect(toolEnd.output).toBe("3");
     expect(toolEnd.is_mcp_tool).toBe(false);
     expect(toolEnd.run_id).toBe(toolStart.run_id);
 
-    const firstLlm = eventsOf(guard, "on_llm_end")[0].output.response;
+    const firstLlm = eventsOf(trellarAgent, "on_llm_end")[0].output.response;
     expect(firstLlm).toContain('TOOL CALL: add(args={"a": 1, "b": 2})');
     expect(firstLlm).toContain("TOOL RESPONSE [add]: 3");
   });
 
   it("exposes available tools in the OpenAI shape with a stable hash", async () => {
-    const guard = getStrandsGuard("t");
-    await makeAgent(guard, [toolTurn("add", { a: 1, b: 2 }), text("3")], { tools: [add] }).invoke("1+2?");
+    const trellarAgent = trellarStrandsAgent("t");
+    await makeAgent(trellarAgent, [toolTurn("add", { a: 1, b: 2 }), text("3")], { tools: [add] }).invoke("1+2?");
 
-    const starts = eventsOf(guard, "on_chat_model_start");
+    const starts = eventsOf(trellarAgent, "on_chat_model_start");
     expect(new Set(starts.map((s) => s.tools_hash)).size).toBe(1);
     const hash = starts[0].tools_hash;
-    expect(Object.keys(guard.availableTools)).toEqual([hash]);
-    const schema: any = guard.availableTools[hash]![0];
+    expect(Object.keys(trellarAgent.availableTools)).toEqual([hash]);
+    const schema: any = trellarAgent.availableTools[hash]![0];
     expect(schema.type).toBe("function");
     expect(schema.function.name).toBe("add");
     expect(schema.function.description).toBe("Add two numbers.");
@@ -182,38 +182,38 @@ describe("single agent", () => {
   });
 
   it("a failing tool still produces a valid payload", async () => {
-    const guard = getStrandsGuard("t");
-    await makeAgent(guard, [toolTurn("boom", {}), text("sorry")], { tools: [boom] }).invoke("go");
-    const errors = eventsOf(guard, "on_tool_error");
+    const trellarAgent = trellarStrandsAgent("t");
+    await makeAgent(trellarAgent, [toolTurn("boom", {}), text("sorry")], { tools: [boom] }).invoke("go");
+    const errors = eventsOf(trellarAgent, "on_tool_error");
     expect(errors).toHaveLength(1);
     expect(errors[0].error).toContain("tool exploded");
-    assertBackendAccepts(guard);
+    assertBackendAccepts(trellarAgent);
   });
 
-  it("a model failure records the error and releases the guard", async () => {
-    const guard = getStrandsGuard("t");
-    const agent = makeAgent(guard, [{ error: "model down" }]);
+  it("a model failure records the error and releases the Trellar agent", async () => {
+    const trellarAgent = trellarStrandsAgent("t");
+    const agent = makeAgent(trellarAgent, [{ error: "model down" }]);
     await expect(agent.invoke("go")).rejects.toThrow();
-    expect(eventsOf(guard, "on_llm_error")[0].error).toContain("model down");
-    expect(isGuardActive(guard)).toBe(false);
-    assertBackendAccepts(guard);
+    expect(eventsOf(trellarAgent, "on_llm_error")[0].error).toContain("model down");
+    expect(isTrellarAgentActive(trellarAgent)).toBe(false);
+    assertBackendAccepts(trellarAgent);
   });
 
   it("reuse resets events and the trace id", async () => {
-    const guard = getStrandsGuard("t");
-    await makeAgent(guard, [text("one")]).invoke("first");
-    const firstTrace = guard.traceId;
-    await makeAgent(guard, [text("two")]).invoke("second");
-    expect(guard.traceId).not.toBe(firstTrace);
-    expect(guard.events.every((e) => e["trace_id"] === guard.traceId)).toBe(true);
-    expect(eventsOf(guard, "on_chain_start")).toHaveLength(1);
+    const trellarAgent = trellarStrandsAgent("t");
+    await makeAgent(trellarAgent, [text("one")]).invoke("first");
+    const firstTrace = trellarAgent.traceId;
+    await makeAgent(trellarAgent, [text("two")]).invoke("second");
+    expect(trellarAgent.traceId).not.toBe(firstTrace);
+    expect(trellarAgent.events.every((e) => e["trace_id"] === trellarAgent.traceId)).toBe(true);
+    expect(eventsOf(trellarAgent, "on_chain_start")).toHaveLength(1);
   });
 
   it("builds the narrative context", async () => {
-    const guard = getStrandsGuard("t");
-    await makeAgent(guard, [toolTurn("add", { a: 1, b: 2 }), text("3")], { tools: [add] }).invoke("1+2?");
-    const context = guard.buildContext();
-    expect(context).toContain(`Trace ID: ${guard.traceId}`);
+    const trellarAgent = trellarStrandsAgent("t");
+    await makeAgent(trellarAgent, [toolTurn("add", { a: 1, b: 2 }), text("3")], { tools: [add] }).invoke("1+2?");
+    const context = trellarAgent.buildContext();
+    expect(context).toContain(`Trace ID: ${trellarAgent.traceId}`);
     expect(context).toContain("tool: add");
     expect(context).toContain("human: 1+2?");
   });
@@ -282,38 +282,38 @@ describe("MCP detection", () => {
         });
       }
     }
-    const guard = getStrandsGuard("t");
-    await makeAgent(guard, [toolTurn("create_ticket", { symbols: "GM" }), text("ok")], {
+    const trellarAgent = trellarStrandsAgent("t");
+    await makeAgent(trellarAgent, [toolTurn("create_ticket", { symbols: "GM" }), text("ok")], {
       tools: [new McpTool(), add],
     }).invoke("buy");
-    const end = eventsOf(guard, "on_tool_end")[0];
+    const end = eventsOf(trellarAgent, "on_tool_end")[0];
     expect(end.is_mcp_tool).toBe(true);
     expect(end.output).toBe("T-123");
-    assertBackendAccepts(guard);
+    assertBackendAccepts(trellarAgent);
   });
 });
 
-function buildGraph(guard: StrandsGuardCallback, gate: () => unknown | Promise<unknown>): Graph {
-  const a1 = makeAgent(guard, [toolTurn("add", { a: 1, b: 2 }), text("3")], { name: "a1", tools: [add] });
-  const a2 = makeAgent(guard, [text("report")], { name: "a2" });
+function buildGraph(trellarAgent: StrandsAgentCallback, gate: () => unknown | Promise<unknown>): Graph {
+  const a1 = makeAgent(trellarAgent, [toolTurn("add", { a: 1, b: 2 }), text("3")], { name: "a1", tools: [add] });
+  const a2 = makeAgent(trellarAgent, [text("report")], { name: "a2" });
   return new Graph({
     nodes: [a1, new FunctionNode("gate", gate), a2],
     edges: [
       [a1.id, "gate"],
       ["gate", a2.id],
     ],
-    plugins: [guard],
+    plugins: [trellarAgent],
   });
 }
 
 describe("graph", () => {
   it("nests graph -> node -> agent -> llm/tool", async () => {
-    const guard = getStrandsGuard("t");
-    await buildGraph(guard, () => {}).invoke("go");
+    const trellarAgent = trellarStrandsAgent("t");
+    await buildGraph(trellarAgent, () => {}).invoke("go");
 
-    const chains = eventsOf(guard, "on_chain_start");
+    const chains = eventsOf(trellarAgent, "on_chain_start");
     const byRun = new Map(chains.map((e) => [e.run_id, e]));
-    const root = guard.events[0]!;
+    const root = trellarAgent.events[0]!;
     expect(root["parent_run_id"]).toBeNull();
     expect(root["node_type"]).toBe("chain");
 
@@ -322,61 +322,61 @@ describe("graph", () => {
     expect(names.filter((n) => n.startsWith("a1-"))).toHaveLength(1); // graph node chain (agent id)
     expect(names).toContain("gate");
 
-    const llm = eventsOf(guard, "on_chat_model_start")[0];
+    const llm = eventsOf(trellarAgent, "on_chat_model_start")[0];
     expect(byRun.get(llm.parent_run_id)!.node_name).toBe("a1");
-    const toolStart = eventsOf(guard, "on_tool_start")[0];
+    const toolStart = eventsOf(trellarAgent, "on_tool_start")[0];
     expect(byRun.get(toolStart.parent_run_id)!.node_name).toBe("a1");
 
     const agentChain = byRun.get(llm.parent_run_id)!;
     const nodeChain = byRun.get(agentChain.parent_run_id)!;
     expect(nodeChain.parent_run_id).toBe(root["run_id"]);
-    assertBackendAccepts(guard);
+    assertBackendAccepts(trellarAgent);
   });
 
   it("has one trace and the root end is last", async () => {
-    const guard = getStrandsGuard("t");
-    await buildGraph(guard, () => {}).invoke("go");
-    expect(new Set(guard.events.map((e) => e["trace_id"]))).toEqual(new Set([guard.traceId]));
-    expect(guard.events.at(-1)).toMatchObject({ event: "on_chain_end", run_id: guard.traceId });
+    const trellarAgent = trellarStrandsAgent("t");
+    await buildGraph(trellarAgent, () => {}).invoke("go");
+    expect(new Set(trellarAgent.events.map((e) => e["trace_id"]))).toEqual(new Set([trellarAgent.traceId]));
+    expect(trellarAgent.events.at(-1)).toMatchObject({ event: "on_chain_end", run_id: trellarAgent.traceId });
   });
 
   it("evaluateConfidence() works from inside a node and sends a backend-valid payload", async () => {
     const calls = mockFetch();
-    const guard = getStrandsGuard("net-name");
+    const trellarAgent = trellarStrandsAgent("net-name");
     const results: any[] = [];
-    await buildGraph(guard, async () => {
+    await buildGraph(trellarAgent, async () => {
       results.push(await evaluateConfidence());
     }).invoke("go");
 
     expect(results[0].score).toBe(8);
     expect(calls).toHaveLength(1);
     const body = calls[0]!.body;
-    expect(body).toMatchObject({ agent_name: "net-name", trace_id: guard.traceId, observability_call: false });
+    expect(body).toMatchObject({ agent_name: "net-name", trace_id: trellarAgent.traceId, observability_call: false });
     assertValidAgentLoopRequest(body);
-    expect(isGuardActive(guard)).toBe(false); // released after the run
+    expect(isTrellarAgentActive(trellarAgent)).toBe(false); // released after the run
   });
 
   it("nests an agent-as-tool call under the outer tool call", async () => {
-    const guard = getStrandsGuard("t");
-    const inner = makeAgent(guard, [text("inner answer")], { name: "inner" });
+    const trellarAgent = trellarStrandsAgent("t");
+    const inner = makeAgent(trellarAgent, [text("inner answer")], { name: "inner" });
     const askInner = tool({
       name: "ask_inner",
       description: "Ask the inner agent.",
       inputSchema: z.object({ question: z.string() }),
       callback: async ({ question }) => String((await inner.invoke(question)).toString()),
     });
-    const outer = makeAgent(guard, [toolTurn("ask_inner", { question: "q" }), text("done")], {
+    const outer = makeAgent(trellarAgent, [toolTurn("ask_inner", { question: "q" }), text("done")], {
       name: "outer",
       tools: [askInner],
     });
     await outer.invoke("go");
 
-    const toolStart = eventsOf(guard, "on_tool_start")[0];
-    const innerChain = eventsOf(guard, "on_chain_start").find((e) => e.node_name === "inner");
+    const toolStart = eventsOf(trellarAgent, "on_tool_start")[0];
+    const innerChain = eventsOf(trellarAgent, "on_chain_start").find((e) => e.node_name === "inner");
     expect(innerChain.parent_run_id).toBe(toolStart.run_id);
-    const roots = eventsOf(guard, "on_chain_start").filter((e) => e.parent_run_id === null);
+    const roots = eventsOf(trellarAgent, "on_chain_start").filter((e) => e.parent_run_id === null);
     expect(roots.map((r) => r.node_name)).toEqual(["outer"]);
-    assertBackendAccepts(guard);
+    assertBackendAccepts(trellarAgent);
   });
 });
 
@@ -385,29 +385,29 @@ describe("conditional routing", () => {
   const routeEmail = tool({ name: "route_to_send_email_agent", description: "r", inputSchema: z.object({}), callback: () => "route:send_email" });
   const flag = tool({ name: "flag_email_report_request", description: "f", inputSchema: z.object({}), callback: () => "email_report_requested" });
 
-  /** Names of the tools an agent (by name) called in this run, read back from the guard's own events. */
-  function calledTools(guard: StrandsGuardCallback, agentName: string): string[] {
+  /** Names of the tools an agent (by name) called in this run, read back from the Trellar agent's own events. */
+  function calledTools(trellarAgent: StrandsAgentCallback, agentName: string): string[] {
     const chainName = (runId: string): string | undefined =>
-      (guard.events as any[]).find((e) => e.run_id === runId && e.event === "on_chain_start")?.node_name;
-    return (guard.events as any[])
+      (trellarAgent.events as any[]).find((e) => e.run_id === runId && e.event === "on_chain_start")?.node_name;
+    return (trellarAgent.events as any[])
       .filter((e) => e.event === "on_tool_start" && chainName(e.parent_run_id) === agentName)
       .map((e) => e.tool);
   }
 
   // Strands Graph uses AND semantics for incoming edges, so each path gets its own gate.
-  function routingGraph(guard: StrandsGuardCallback, routeTool: string, jiraFlagsEmail: boolean): Graph {
-    const router = makeAgent(guard, [toolTurn(routeTool, {}), text("routed")], {
+  function routingGraph(trellarAgent: StrandsAgentCallback, routeTool: string, jiraFlagsEmail: boolean): Graph {
+    const router = makeAgent(trellarAgent, [toolTurn(routeTool, {}), text("routed")], {
       name: "router_agent",
       tools: [routeJira, routeEmail],
     });
     const jira = makeAgent(
-      guard,
+      trellarAgent,
       jiraFlagsEmail ? [toolTurn("flag_email_report_request", {}), text("preparing")] : [text("3 open issues")],
       { name: "jira_react_agent", tools: [flag] },
     );
-    const reporterDirect = makeAgent(guard, [text("Dear user, ...")], { name: "reporter_direct" });
-    const reporterAfterJira = makeAgent(guard, [text("Dear user, ...")], { name: "reporter_after_jira" });
-    const emailOnly = () => calledTools(guard, "router_agent").includes("route_to_send_email_agent");
+    const reporterDirect = makeAgent(trellarAgent, [text("Dear user, ...")], { name: "reporter_direct" });
+    const reporterAfterJira = makeAgent(trellarAgent, [text("Dear user, ...")], { name: "reporter_after_jira" });
+    const emailOnly = () => calledTools(trellarAgent, "router_agent").includes("route_to_send_email_agent");
 
     return new Graph({
       nodes: [
@@ -425,62 +425,62 @@ describe("conditional routing", () => {
         {
           source: jira.id,
           target: "gate_after_jira",
-          handler: () => calledTools(guard, "jira_react_agent").includes("flag_email_report_request"),
+          handler: () => calledTools(trellarAgent, "jira_react_agent").includes("flag_email_report_request"),
         },
         { source: "gate_after_jira", target: reporterAfterJira.id },
       ],
-      plugins: [guard],
+      plugins: [trellarAgent],
     });
   }
-  const chainNames = (guard: StrandsGuardCallback) => new Set(eventsOf(guard, "on_chain_start").map((e) => e.node_name));
+  const chainNames = (trellarAgent: StrandsAgentCallback) => new Set(eventsOf(trellarAgent, "on_chain_start").map((e) => e.node_name));
 
   it("email only skips jira", async () => {
     const calls = mockFetch();
-    const guard = getStrandsGuard("t");
-    await routingGraph(guard, "route_to_send_email_agent", false).invoke("email me");
-    const names = chainNames(guard);
+    const trellarAgent = trellarStrandsAgent("t");
+    await routingGraph(trellarAgent, "route_to_send_email_agent", false).invoke("email me");
+    const names = chainNames(trellarAgent);
     expect(names.has("gate_direct")).toBe(true);
     expect(names.has("reporter_direct")).toBe(true);
     expect(names.has("jira_react_agent")).toBe(false);
     expect(calls).toHaveLength(1); // the gate evaluated once
-    assertBackendAccepts(guard);
+    assertBackendAccepts(trellarAgent);
   });
 
   it("jira without an email request skips gate and reporter", async () => {
     const calls = mockFetch();
-    const guard = getStrandsGuard("t");
-    await routingGraph(guard, "route_to_jira_agent", false).invoke("how many issues?");
-    const names = chainNames(guard);
+    const trellarAgent = trellarStrandsAgent("t");
+    await routingGraph(trellarAgent, "route_to_jira_agent", false).invoke("how many issues?");
+    const names = chainNames(trellarAgent);
     expect(names.has("jira_react_agent")).toBe(true);
     expect(names.has("gate_after_jira")).toBe(false);
     expect(names.has("reporter_after_jira")).toBe(false);
     expect(calls).toHaveLength(0);
-    assertBackendAccepts(guard);
+    assertBackendAccepts(trellarAgent);
   });
 
   it("jira with the email flag goes through the gate", async () => {
     const calls = mockFetch();
-    const guard = getStrandsGuard("t");
-    await routingGraph(guard, "route_to_jira_agent", true).invoke("issues, then email me");
-    const order = eventsOf(guard, "on_chain_start").map((e) => e.node_name);
+    const trellarAgent = trellarStrandsAgent("t");
+    await routingGraph(trellarAgent, "route_to_jira_agent", true).invoke("issues, then email me");
+    const order = eventsOf(trellarAgent, "on_chain_start").map((e) => e.node_name);
     expect(order.indexOf("jira_react_agent")).toBeGreaterThan(-1);
     expect(order.indexOf("jira_react_agent")).toBeLessThan(order.indexOf("gate_after_jira"));
     expect(order.indexOf("gate_after_jira")).toBeLessThan(order.indexOf("reporter_after_jira"));
     expect(calls).toHaveLength(1);
-    assertBackendAccepts(guard);
+    assertBackendAccepts(trellarAgent);
   });
 });
 
 describe("observability mode", () => {
   it("NONE never auto-evaluates", async () => {
     const calls = mockFetch();
-    await makeAgent(getStrandsGuard("t", ObservabilityMode.NONE), [text("hi")]).invoke("go");
+    await makeAgent(trellarStrandsAgent("t", ObservabilityMode.NONE), [text("hi")]).invoke("go");
     expect(calls).toHaveLength(0);
   });
 
   it("ALWAYS evaluates at root end with the final chain end recorded", async () => {
     const calls = mockFetch();
-    await buildGraph(getStrandsGuard("t", ObservabilityMode.ALWAYS), () => {}).invoke("go");
+    await buildGraph(trellarStrandsAgent("t", ObservabilityMode.ALWAYS), () => {}).invoke("go");
     expect(calls).toHaveLength(1);
     const body = calls[0]!.body;
     expect(body.observability_call).toBe(true);
@@ -490,14 +490,14 @@ describe("observability mode", () => {
 
   it("IF_NOT_EVALUATED skips after a manual call", async () => {
     const calls = mockFetch();
-    await buildGraph(getStrandsGuard("t", ObservabilityMode.IF_NOT_EVALUATED), () => evaluateConfidence()).invoke("go");
+    await buildGraph(trellarStrandsAgent("t", ObservabilityMode.IF_NOT_EVALUATED), () => evaluateConfidence()).invoke("go");
     expect(calls).toHaveLength(1);
     expect(calls[0]!.body.observability_call).toBe(false);
   });
 
   it("IF_NOT_EVALUATED runs when there was no manual call", async () => {
     const calls = mockFetch();
-    await buildGraph(getStrandsGuard("t", ObservabilityMode.IF_NOT_EVALUATED), () => {}).invoke("go");
+    await buildGraph(trellarStrandsAgent("t", ObservabilityMode.IF_NOT_EVALUATED), () => {}).invoke("go");
     expect(calls).toHaveLength(1);
     expect(calls[0]!.body.observability_call).toBe(true);
   });
@@ -505,7 +505,7 @@ describe("observability mode", () => {
   it("auto-evaluate failure is swallowed", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("backend down")));
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await makeAgent(getStrandsGuard("t", ObservabilityMode.ALWAYS), [text("hi")]).invoke("go");
+    const result = await makeAgent(trellarStrandsAgent("t", ObservabilityMode.ALWAYS), [text("hi")]).invoke("go");
     expect(String(result)).toContain("hi");
   });
 });
@@ -513,64 +513,64 @@ describe("observability mode", () => {
 describe("single call", () => {
   it("flags the payload and satisfies the backend schema", async () => {
     const calls = mockFetch();
-    await makeAgent(getStrandsSingleCallGuard("t", ObservabilityMode.ALWAYS), [text("hi")]).invoke("go");
+    await makeAgent(trellarStrandsSingleCall("t", ObservabilityMode.ALWAYS), [text("hi")]).invoke("go");
     expect(calls[0]!.body.single_call).toBe(true);
     assertValidAgentLoopRequest(calls[0]!.body);
   });
 
-  it("a regular guard is not single_call", async () => {
+  it("a regular Trellar agent is not single_call", async () => {
     const calls = mockFetch();
-    await makeAgent(getStrandsGuard("t", ObservabilityMode.ALWAYS), [text("hi")]).invoke("go");
+    await makeAgent(trellarStrandsAgent("t", ObservabilityMode.ALWAYS), [text("hi")]).invoke("go");
     expect(calls[0]!.body.single_call).toBe(false);
   });
 
-  it("stores the result on the guard and releases it", async () => {
+  it("stores the result on the Trellar agent and releases it", async () => {
     mockFetch();
-    const guard = getStrandsSingleCallGuard("t", ObservabilityMode.ALWAYS);
-    await makeAgent(guard, [text("hi")]).invoke("go");
-    expect(guard.trellarEvaluateResult?.score).toBe(8);
-    expect(guard.trellarEvaluateError).toBeNull();
-    expect(isGuardActive(guard)).toBe(false);
+    const trellarAgent = trellarStrandsSingleCall("t", ObservabilityMode.ALWAYS);
+    await makeAgent(trellarAgent, [text("hi")]).invoke("go");
+    expect(trellarAgent.trellarEvaluateResult?.score).toBe(8);
+    expect(trellarAgent.trellarEvaluateError).toBeNull();
+    expect(isTrellarAgentActive(trellarAgent)).toBe(false);
   });
 
   it("stores a backend error instead of raising", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("backend down")));
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    const guard = getStrandsSingleCallGuard("t", ObservabilityMode.ALWAYS);
-    await makeAgent(guard, [text("hi")]).invoke("go");
-    expect(guard.trellarEvaluateResult).toBeNull();
-    expect(guard.trellarEvaluateError).toBeInstanceOf(Error);
+    const trellarAgent = trellarStrandsSingleCall("t", ObservabilityMode.ALWAYS);
+    await makeAgent(trellarAgent, [text("hi")]).invoke("go");
+    expect(trellarAgent.trellarEvaluateResult).toBeNull();
+    expect(trellarAgent.trellarEvaluateError).toBeInstanceOf(Error);
   });
 
   it("a second call resets the previous result", async () => {
     mockFetch();
-    const guard = getStrandsSingleCallGuard("t", ObservabilityMode.ALWAYS);
-    await makeAgent(guard, [text("hi")]).invoke("go");
-    const first = guard.trellarEvaluateResult;
+    const trellarAgent = trellarStrandsSingleCall("t", ObservabilityMode.ALWAYS);
+    await makeAgent(trellarAgent, [text("hi")]).invoke("go");
+    const first = trellarAgent.trellarEvaluateResult;
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    await makeAgent(guard, [text("hi")]).invoke("go again");
+    await makeAgent(trellarAgent, [text("hi")]).invoke("go again");
     expect(first).not.toBeNull();
-    expect(guard.trellarEvaluateResult).toBeNull();
+    expect(trellarAgent.trellarEvaluateResult).toBeNull();
   });
 
   it("NONE mode does not evaluate", async () => {
     const calls = mockFetch();
-    const guard = getStrandsSingleCallGuard("t");
-    await makeAgent(guard, [text("hi")]).invoke("go");
+    const trellarAgent = trellarStrandsSingleCall("t");
+    await makeAgent(trellarAgent, [text("hi")]).invoke("go");
     expect(calls).toHaveLength(0);
-    expect(guard.trellarEvaluateResult).toBeNull();
+    expect(trellarAgent.trellarEvaluateResult).toBeNull();
   });
 });
 
 describe("concurrent runs are isolated", () => {
-  it("each parallel graph evaluates its own guard", async () => {
+  it("each parallel graph evaluates its own Trellar agent", async () => {
     const calls = mockFetch();
     const names = ["run-a", "run-b", "run-c"];
-    const guards = names.map((n) => getStrandsGuard(n));
+    const trellarAgents = names.map((n) => trellarStrandsAgent(n));
     await Promise.all(
-      guards.map((guard, i) =>
-        buildGraph(guard, async () => {
+      trellarAgents.map((trellarAgent, i) =>
+        buildGraph(trellarAgent, async () => {
           await new Promise((resolve) => setTimeout(resolve, 10 * (3 - i)));
           await evaluateConfidence();
         }).invoke(`task ${names[i]}`),
@@ -579,9 +579,9 @@ describe("concurrent runs are isolated", () => {
 
     expect(calls).toHaveLength(3);
     for (const call of calls) {
-      const guard = guards.find((g) => g.agentName === call.body.agent_name)!;
-      expect(call.body.trace_id).toBe(guard.traceId);
-      expect(call.body.context.every((e: any) => e.trace_id === guard.traceId)).toBe(true);
+      const trellarAgent = trellarAgents.find((g) => g.agentName === call.body.agent_name)!;
+      expect(call.body.trace_id).toBe(trellarAgent.traceId);
+      expect(call.body.context.every((e: any) => e.trace_id === trellarAgent.traceId)).toBe(true);
       expect(call.body.context[0].inputs).toEqual([`task ${call.body.agent_name}`]);
     }
     expect(new Set(calls.map((c) => c.body.agent_name)).size).toBe(3);

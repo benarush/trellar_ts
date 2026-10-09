@@ -1,17 +1,17 @@
-import { type AgentLoopResult, evaluateWithGuard, ObservabilityMode } from "../../agentLoop.js";
-import { releaseGuard } from "../../context.js";
+import { type AgentLoopResult, evaluateWithTrellarAgent, ObservabilityMode } from "../../agentLoop.js";
+import { releaseTrellarAgent } from "../../context.js";
 import { logger } from "../../logger.js";
-import { AgentGuardCallback } from "./langchainCallback.js";
+import { LangchainAgentCallback } from "./langchainCallback.js";
 
 type Obj = Record<string, any>;
 
 /**
- * Guard for a single bare LLM call (no LangGraph/chain wrapper).
+ * Callback for a single bare LLM call (no LangGraph/chain wrapper).
  *
- * This class is not part of the public API. Use ``getSingleCallGuard`` to
+ * This class is not part of the public API. Use ``trellarLangchainSingleCall`` to
  * obtain an instance.
  *
- * ``AgentGuardCallback`` only sets ``traceId`` / activates the guard inside
+ * ``LangchainAgentCallback`` only sets ``traceId`` / activates the Trellar agent inside
  * ``handleChainStart``, and only auto-triggers ``evaluateConfidence()`` inside
  * ``handleChainEnd`` -- both scoped to ``parentRunId === undefined``. A bare
  * ``llm.invoke(...)`` never fires either of those events (no chain involved),
@@ -19,8 +19,8 @@ type Obj = Record<string, any>;
  * ``handleLLMStart`` / ``handleChatModelStart`` (root-run reset + registration)
  * and ``handleLLMEnd`` (auto-evaluate trigger).
  */
-export class SingleCallGuardCallback extends AgentGuardCallback {
-  override name = "trellar_single_call_guard";
+export class LangchainSingleCallCallback extends LangchainAgentCallback {
+  override name = "trellar_langchain_single_call";
   override isSingleCall = true;
 
   /**
@@ -68,7 +68,7 @@ export class SingleCallGuardCallback extends AgentGuardCallback {
     if (parentRunId === undefined || parentRunId === null) {
       await this._autoEvaluate();
       // Release the slot so the next top-level call starts clean.
-      releaseGuard(this);
+      releaseTrellarAgent(this);
     }
   }
 
@@ -77,7 +77,7 @@ export class SingleCallGuardCallback extends AgentGuardCallback {
     if (parentRunId === undefined || parentRunId === null) {
       // Root call failing -- handleLLMEnd will never fire for this runId
       // (they are mutually exclusive), so release the slot here too.
-      releaseGuard(this);
+      releaseTrellarAgent(this);
     }
   }
 
@@ -92,7 +92,7 @@ export class SingleCallGuardCallback extends AgentGuardCallback {
     if (this.observabilityMode === ObservabilityMode.NONE) return;
     if (this.observabilityMode === ObservabilityMode.IF_NOT_EVALUATED && this._evaluated) return;
     try {
-      this.trellarEvaluateResult = await evaluateWithGuard(this, { _observabilityCall: true });
+      this.trellarEvaluateResult = await evaluateWithTrellarAgent(this, { _observabilityCall: true });
       this.trellarEvaluateError = null;
     } catch (error) {
       this.trellarEvaluateError = error;

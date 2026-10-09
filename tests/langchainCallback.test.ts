@@ -1,9 +1,9 @@
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getAgentGuard, ObservabilityMode } from "../src/langchain.js";
-import { AgentGuardCallback } from "../src/callbacks/langchain/langchainCallback.js";
-import { isGuardActive } from "../src/context.js";
+import { trellarLangchainAgent, ObservabilityMode } from "../src/langchain.js";
+import { LangchainAgentCallback } from "../src/callbacks/langchain/langchainCallback.js";
+import { isTrellarAgentActive } from "../src/context.js";
 import * as agentLoop from "../src/agentLoop.js";
 import {
   fakeGeneration,
@@ -14,10 +14,10 @@ import {
 } from "./factories.js";
 import { assertValidAgentLoopRequest } from "./helpers.js";
 
-const mkGuard = (mode: ObservabilityMode = ObservabilityMode.NONE) => getAgentGuard("test-agent", mode);
+const mkTrellarAgent = (mode: ObservabilityMode = ObservabilityMode.NONE) => trellarLangchainAgent("test-agent", mode);
 
 /** Start a root chain on ``h`` and return its run id. */
-function root(h: AgentGuardCallback, inputs: unknown = { messages: [] }, name = "LangGraph"): string {
+function root(h: LangchainAgentCallback, inputs: unknown = { messages: [] }, name = "LangGraph"): string {
   const id = uuid();
   h.handleChainStart({ name }, inputs, id, undefined, [], {}, undefined, name);
   return id;
@@ -25,27 +25,27 @@ function root(h: AgentGuardCallback, inputs: unknown = { messages: [] }, name = 
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("getAgentGuard", () => {
-  it("returns an AgentGuardCallback bound to the agent name", () => {
-    const g = getAgentGuard("research-agent");
-    expect(g).toBeInstanceOf(AgentGuardCallback);
+describe("trellarLangchainAgent", () => {
+  it("returns an LangchainAgentCallback bound to the agent name", () => {
+    const g = trellarLangchainAgent("research-agent");
+    expect(g).toBeInstanceOf(LangchainAgentCallback);
     expect(g.agentName).toBe("research-agent");
   });
   it("rejects empty and blank names with a descriptive error", () => {
-    expect(() => getAgentGuard("")).toThrow(/agent_name is required/);
-    expect(() => getAgentGuard("   ")).toThrow(/stable, descriptive name/);
+    expect(() => trellarLangchainAgent("")).toThrow(/agent_name is required/);
+    expect(() => trellarLangchainAgent("   ")).toThrow(/stable, descriptive name/);
   });
   it("returns a new instance every call", () => {
-    expect(getAgentGuard("a")).not.toBe(getAgentGuard("a"));
+    expect(trellarLangchainAgent("a")).not.toBe(trellarLangchainAgent("a"));
   });
   it("rejects an invalid observability mode", () => {
-    expect(() => getAgentGuard("a", "sometimes" as any)).toThrow(/not a valid ObservabilityMode/);
+    expect(() => trellarLangchainAgent("a", "sometimes" as any)).toThrow(/not a valid ObservabilityMode/);
   });
 });
 
 describe("handleChainStart / handleChainEnd", () => {
   it("normalizes inputs to a list for every input shape", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h, [new HumanMessage("hi")]);
     h.handleChainStart({}, new AIMessage("x"), uuid(), r, [], {}, undefined, "a");
     h.handleChainStart({}, { foo: 1 }, uuid(), r, [], {}, undefined, "b");
@@ -56,13 +56,13 @@ describe("handleChainStart / handleChainEnd", () => {
   });
 
   it("dict inputs with messages use labeled strings", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     root(h, { messages: [new HumanMessage("hello"), new SystemMessage("sys")] });
     expect(h.events[0]!["inputs"]).toEqual(["HUMAN MESSAGE: hello", "SYSTEM MESSAGE: sys"]);
   });
 
   it("serializes non-dict outputs and dict outputs with messages", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     const child = uuid();
     h.handleChainStart({}, {}, child, r, [], {}, undefined, "n");
@@ -73,7 +73,7 @@ describe("handleChainStart / handleChainEnd", () => {
   });
 
   it("falls back from runName to chain.name to the class id", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     h.handleChainStart({ name: "FromSerialized" }, {}, uuid(), r, [], {});
     h.handleChainStart({ id: ["langchain", "RunnableSequence"] }, {}, uuid(), r, [], {});
@@ -82,7 +82,7 @@ describe("handleChainStart / handleChainEnd", () => {
   });
 
   it("surfaces langgraph_step from metadata, else null", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     h.handleChainStart({}, {}, uuid(), r, [], { langgraph_step: 3 }, undefined, "a");
     h.handleChainStart({}, {}, uuid(), r, [], {}, undefined, "b");
@@ -90,22 +90,22 @@ describe("handleChainStart / handleChainEnd", () => {
     expect(h.events.map((e) => e["langgraph_step"])).toEqual([null, 3, null, null]);
   });
 
-  it("root start sets trace id and activates the guard", () => {
-    const h = mkGuard();
+  it("root start sets trace id and activates the Trellar agent", () => {
+    const h = mkTrellarAgent();
     const r = root(h);
     expect(h.traceId).toBe(r);
-    expect(isGuardActive(h)).toBe(true);
+    expect(isTrellarAgentActive(h)).toBe(true);
   });
 
   it("non-root start leaves the trace id alone", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     h.handleChainStart({}, {}, uuid(), r, [], {}, undefined, "n");
     expect(h.traceId).toBe(r);
   });
 
-  it("reusing a guard across two root runs does not leak events", () => {
-    const h = mkGuard();
+  it("reusing a Trellar agent across two root runs does not leak events", () => {
+    const h = mkTrellarAgent();
     root(h);
     h.handleToolStart({ name: "t" }, "{}", uuid(), undefined, [], {}, "t");
     const firstCount = h.events.length;
@@ -119,37 +119,37 @@ describe("handleChainStart / handleChainEnd", () => {
   });
 
   it("releases the slot when the root chain ends or errors, but not for child runs", async () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     const child = uuid();
     h.handleChainStart({}, {}, child, r, [], {}, undefined, "n");
     await h.handleChainEnd({}, child, r);
-    expect(isGuardActive(h)).toBe(true);
+    expect(isTrellarAgentActive(h)).toBe(true);
     h.handleChainError(new Error("x"), child, r);
-    expect(isGuardActive(h)).toBe(true);
+    expect(isTrellarAgentActive(h)).toBe(true);
     await h.handleChainEnd({}, r);
-    expect(isGuardActive(h)).toBe(false);
+    expect(isTrellarAgentActive(h)).toBe(false);
 
     const r2 = root(h);
     h.handleChainError(new Error("boom"), r2);
-    expect(isGuardActive(h)).toBe(false);
+    expect(isTrellarAgentActive(h)).toBe(false);
     expect(h.events.at(-1)).toMatchObject({ event: "on_chain_error", error: "boom" });
   });
 
-  it("does not release a different, still-active guard", async () => {
-    const a = mkGuard();
-    const b = mkGuard();
+  it("does not release a different, still-active Trellar agent", async () => {
+    const a = mkTrellarAgent();
+    const b = mkTrellarAgent();
     const ra = root(a);
     root(b);
     await a.handleChainEnd({}, ra);
-    expect(isGuardActive(a)).toBe(false);
-    expect(isGuardActive(b)).toBe(true);
+    expect(isTrellarAgentActive(a)).toBe(false);
+    expect(isTrellarAgentActive(b)).toBe(true);
   });
 });
 
 describe("handleLLMStart / handleChatModelStart", () => {
   it("records model and joined prompts for a plain LLM", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     const id = uuid();
     h.handleLLMStart({ kwargs: { model_name: "m" } }, ["p1", "p2"], id, r);
@@ -163,7 +163,7 @@ describe("handleLLMStart / handleChatModelStart", () => {
   });
 
   it("extracts system/human from the first batch only", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     h.handleChatModelStart(
       { kwargs: { model: "gpt" } },
@@ -175,7 +175,7 @@ describe("handleLLMStart / handleChatModelStart", () => {
   });
 
   it("empty messages do not throw", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     h.handleChatModelStart({ name: "X" }, [], uuid(), r);
     expect(h.events.at(-1)!["input"]).toEqual({ system: null, human: null });
@@ -184,7 +184,7 @@ describe("handleLLMStart / handleChatModelStart", () => {
   const openAiTool = (name: string) => ({ type: "function", function: { name, description: `${name} d`, parameters: {} } });
 
   it("records bound tools keyed by content hash and stamps tools_hash", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     h.handleChatModelStart({ name: "X" }, [[new HumanMessage("a")]], uuid(), r, {
       invocation_params: { tools: [openAiTool("a")] },
@@ -196,7 +196,7 @@ describe("handleLLMStart / handleChatModelStart", () => {
   });
 
   it("dedupes an identical toolset across calls", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     for (let i = 0; i < 3; i++) {
       h.handleChatModelStart({ name: "X" }, [[new HumanMessage("a")]], uuid(), r, {
@@ -207,11 +207,11 @@ describe("handleLLMStart / handleChatModelStart", () => {
   });
 
   it("falls back to options.tools and leaves no tools alone", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     h.handleChatModelStart({ name: "X" }, [[new HumanMessage("a")]], uuid(), r, { options: { tools: [openAiTool("b")] } });
     expect(Object.keys(h.availableTools)).toHaveLength(1);
-    const h2 = mkGuard();
+    const h2 = mkTrellarAgent();
     const r2 = root(h2);
     h2.handleChatModelStart({ name: "X" }, [[new HumanMessage("a")]], uuid(), r2);
     expect(h2.availableTools).toEqual({});
@@ -221,7 +221,7 @@ describe("handleLLMStart / handleChatModelStart", () => {
 
 describe("handleLLMEnd", () => {
   const end = (response: any) => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     const id = uuid();
     h.handleLLMEnd(response, id, r);
@@ -294,7 +294,7 @@ describe("handleLLMEnd", () => {
 
 describe("tool events", () => {
   it("records the tool, description from bound tools, and parsed input", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     h.handleChatModelStart({ name: "X" }, [[new HumanMessage("a")]], uuid(), r, {
       invocation_params: { tools: [{ type: "function", function: { name: "buy", description: "Buy it", parameters: {} } }] },
@@ -313,14 +313,14 @@ describe("tool events", () => {
   });
 
   it("non-JSON input has parsed null and a missing parent gives null invoked_by", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const id = uuid();
     h.handleToolStart({ name: "t" }, "not json", id, undefined);
     expect(h.events.at(-1)).toMatchObject({ input: { raw: "not json", parsed: null }, invoked_by_run_id: null });
   });
 
   it("records error strings", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     h.handleLLMError(new Error("llm bad"), uuid(), r);
     h.handleToolError(new Error("tool bad"), uuid(), r);
@@ -334,7 +334,7 @@ describe("tool events", () => {
 });
 
 describe("tool output attachment to the requesting LLM event", () => {
-  function llmWithCalls(h: AgentGuardCallback, parent: string, names: string[]): string {
+  function llmWithCalls(h: LangchainAgentCallback, parent: string, names: string[]): string {
     const id = uuid();
     h.handleLLMEnd(
       makeLlmResult({ message: makeAiMessage("", names.map((n, i) => ({ name: n, args: {}, id: `c${i}` }))) }),
@@ -343,14 +343,14 @@ describe("tool output attachment to the requesting LLM event", () => {
     );
     return id;
   }
-  const runTool = (h: AgentGuardCallback, parent: string, name: string, out: unknown) => {
+  const runTool = (h: LangchainAgentCallback, parent: string, name: string, out: unknown) => {
     const id = uuid();
     h.handleToolStart({ name }, "{}", id, parent, [], {}, name);
     h.handleToolEnd(out, id, parent);
   };
 
   it("appends the response to the LLM event sharing the parent", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     llmWithCalls(h, r, ["buy"]);
     const llmEvent = h.events.at(-1)!;
@@ -360,7 +360,7 @@ describe("tool output attachment to the requesting LLM event", () => {
   });
 
   it("keeps the entry until all of its tools resolved", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     llmWithCalls(h, r, ["a", "b"]);
     runTool(h, r, "a", "A");
@@ -370,7 +370,7 @@ describe("tool output attachment to the requesting LLM event", () => {
   });
 
   it("does not cross-wire two parallel branches using different tools", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     const p1 = uuid();
     const p2 = uuid();
@@ -387,7 +387,7 @@ describe("tool output attachment to the requesting LLM event", () => {
   });
 
   it("prefers the matching parent, else the most recent entry for the tool name", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     root(h);
     const p1 = uuid();
     const p2 = uuid();
@@ -403,7 +403,7 @@ describe("tool output attachment to the requesting LLM event", () => {
   });
 
   it("is a no-op with no pending calls or an unmatched tool name", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     runTool(h, r, "x", "out");
     llmWithCalls(h, r, ["a"]);
@@ -414,17 +414,17 @@ describe("tool output attachment to the requesting LLM event", () => {
 
 describe("MCP detection", () => {
   it("isMcpToolRun: annotations metadata key or mcp_* artifacts", () => {
-    expect(AgentGuardCallback.isMcpToolRun({ annotations: undefined }, undefined)).toBe(true);
-    expect(AgentGuardCallback.isMcpToolRun({ annotations: { readOnlyHint: true } }, undefined)).toBe(true);
-    expect(AgentGuardCallback.isMcpToolRun({}, undefined)).toBe(false);
-    expect(AgentGuardCallback.isMcpToolRun(undefined, "plain string")).toBe(false);
-    expect(AgentGuardCallback.isMcpToolRun(undefined, { artifact: [] })).toBe(false);
-    expect(AgentGuardCallback.isMcpToolRun(undefined, { artifact: [{ type: "mcp_structured_content", data: {} }] })).toBe(true);
-    expect(AgentGuardCallback.isMcpToolRun(undefined, { artifact: [{ type: "image" }] })).toBe(false);
+    expect(LangchainAgentCallback.isMcpToolRun({ annotations: undefined }, undefined)).toBe(true);
+    expect(LangchainAgentCallback.isMcpToolRun({ annotations: { readOnlyHint: true } }, undefined)).toBe(true);
+    expect(LangchainAgentCallback.isMcpToolRun({}, undefined)).toBe(false);
+    expect(LangchainAgentCallback.isMcpToolRun(undefined, "plain string")).toBe(false);
+    expect(LangchainAgentCallback.isMcpToolRun(undefined, { artifact: [] })).toBe(false);
+    expect(LangchainAgentCallback.isMcpToolRun(undefined, { artifact: [{ type: "mcp_structured_content", data: {} }] })).toBe(true);
+    expect(LangchainAgentCallback.isMcpToolRun(undefined, { artifact: [{ type: "image" }] })).toBe(false);
   });
 
   it("on_tool_end carries is_mcp_tool true only for MCP tools", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     const mcp = uuid();
     const local = uuid();
@@ -440,7 +440,7 @@ describe("MCP detection", () => {
   });
 
   it("renders the via-MCP marker in the context text", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     const id = uuid();
     h.handleToolStart({ name: "t" }, "{}", id, r, [], { annotations: null }, "t");
@@ -451,7 +451,7 @@ describe("MCP detection", () => {
 
 describe("events are always JSON-serializable and backend-valid", () => {
   it("survives a full tool-calling sequence with exotic values", async () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h, { messages: [new HumanMessage("hi")], extra: new Map([["k", new Set([1])]]) });
     const circular: any = { name: "c" };
     circular.self = circular;
@@ -477,7 +477,7 @@ describe("events are always JSON-serializable and backend-valid", () => {
 
 describe("auto-evaluate on root chain end", () => {
   const spy = () =>
-    vi.spyOn(agentLoop, "evaluateWithGuard").mockResolvedValue({
+    vi.spyOn(agentLoop, "evaluateWithTrellarAgent").mockResolvedValue({
       explanation: "e",
       score: 7,
       decisionIdentifier: "d",
@@ -486,7 +486,7 @@ describe("auto-evaluate on root chain end", () => {
 
   async function run(mode: ObservabilityMode, evaluated = false) {
     const evaluate = spy();
-    const h = mkGuard(mode);
+    const h = mkTrellarAgent(mode);
     const r = root(h);
     h._evaluated = evaluated;
     await h.handleChainEnd({}, r);
@@ -507,7 +507,7 @@ describe("auto-evaluate on root chain end", () => {
 
   it("non-root chain end never triggers auto-evaluation", async () => {
     const evaluate = spy();
-    const h = mkGuard("always");
+    const h = mkTrellarAgent("always");
     const r = root(h);
     const child = uuid();
     h.handleChainStart({}, {}, child, r, [], {}, undefined, "n");
@@ -516,19 +516,19 @@ describe("auto-evaluate on root chain end", () => {
   });
 
   it("swallows and logs errors from the evaluation", async () => {
-    vi.spyOn(agentLoop, "evaluateWithGuard").mockRejectedValue(new Error("backend down"));
+    vi.spyOn(agentLoop, "evaluateWithTrellarAgent").mockRejectedValue(new Error("backend down"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const h = mkGuard("always");
+    const h = mkTrellarAgent("always");
     const r = root(h);
     await expect(h.handleChainEnd({}, r)).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalled();
-    expect(isGuardActive(h)).toBe(false);
+    expect(isTrellarAgentActive(h)).toBe(false);
   });
 });
 
 describe("buildContext", () => {
   it("renders header and node names", () => {
-    const h = mkGuard();
+    const h = mkTrellarAgent();
     const r = root(h);
     h.handleChatModelStart({ kwargs: { model: "m" } }, [[new SystemMessage("S"), new HumanMessage("H")]], uuid(), r);
     const text = h.buildContext();

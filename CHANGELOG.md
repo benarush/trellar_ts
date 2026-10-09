@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- The public factory functions are renamed to product-friendly names (matching
+  the Python package):
+  `getAgentGuard` -> `trellarLangchainAgent`,
+  `getSingleCallGuard` -> `trellarLangchainSingleCall`,
+  `getStrandsGuard` -> `trellarStrandsAgent`,
+  `getStrandsSingleCallGuard` -> `trellarStrandsSingleCall`.
+  `runWithGuard` is now `runWithTrellarAgent` and the `GuardState` type is now
+  `TrellarAgentState`. Behavior and the payload sent to the back-end are unchanged.
+- Callback classes renamed accordingly (`AgentGuardCallback` ->
+  `LangchainAgentCallback`, `SingleCallGuardCallback` ->
+  `LangchainSingleCallCallback`, `StrandsGuardCallback` ->
+  `StrandsAgentCallback`, `StrandsSingleCallGuardCallback` ->
+  `StrandsSingleCallCallback`).
+
+### Deprecated
+- `getAgentGuard`, `getSingleCallGuard`, `getStrandsGuard`,
+  `getStrandsSingleCallGuard` and `runWithGuard` still work but emit a Node
+  `DeprecationWarning` and will be removed in a future release.
+
 ## [0.6.1] - 2026-10-06
 
 First TypeScript release. A one-to-one port of the Python `trellar` 0.6.1: same

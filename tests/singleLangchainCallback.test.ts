@@ -3,9 +3,9 @@ import { FakeListChatModel } from "@langchain/core/utils/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as agentLoop from "../src/agentLoop.js";
-import { SingleCallGuardCallback } from "../src/callbacks/langchain/singleLangchainCallback.js";
-import { isGuardActive } from "../src/context.js";
-import { getSingleCallGuard, ObservabilityMode } from "../src/langchain.js";
+import { LangchainSingleCallCallback } from "../src/callbacks/langchain/singleLangchainCallback.js";
+import { isTrellarAgentActive } from "../src/context.js";
+import { trellarLangchainSingleCall, ObservabilityMode } from "../src/langchain.js";
 import { uuid, makeAiMessage, makeLlmResult } from "./factories.js";
 import { assertValidAgentLoopRequest, mockFetch, useCleanEnv } from "./helpers.js";
 
@@ -13,34 +13,34 @@ useCleanEnv();
 afterEach(() => vi.restoreAllMocks());
 
 const OK = { explanation: "e", score: 7, decisionIdentifier: "d", shouldStopNetwork: false };
-const mk = (mode: ObservabilityMode = ObservabilityMode.NONE) => getSingleCallGuard("single", mode);
+const mk = (mode: ObservabilityMode = ObservabilityMode.NONE) => trellarLangchainSingleCall("single", mode);
 
-describe("getSingleCallGuard", () => {
-  it("returns a single-call guard flagged isSingleCall", () => {
+describe("trellarLangchainSingleCall", () => {
+  it("returns a single-call Trellar agent flagged isSingleCall", () => {
     const g = mk();
-    expect(g).toBeInstanceOf(SingleCallGuardCallback);
+    expect(g).toBeInstanceOf(LangchainSingleCallCallback);
     expect(g.isSingleCall).toBe(true);
     expect(g.trellarEvaluateResult).toBeNull();
     expect(g.trellarEvaluateError).toBeNull();
   });
-  it("rejects blank names", () => expect(() => getSingleCallGuard(" ")).toThrow(/agent_name is required/));
+  it("rejects blank names", () => expect(() => trellarLangchainSingleCall(" ")).toThrow(/agent_name is required/));
 });
 
 describe("run boundary on the LLM events", () => {
-  it("chat model start sets the trace id and activates the guard", () => {
+  it("chat model start sets the trace id and activates the Trellar agent", () => {
     const g = mk();
     const id = uuid();
     g.handleChatModelStart({ name: "X" }, [[new HumanMessage("hi")]], id, undefined);
     expect(g.traceId).toBe(id);
-    expect(isGuardActive(g)).toBe(true);
+    expect(isTrellarAgentActive(g)).toBe(true);
   });
 
-  it("llm start sets the trace id and activates the guard", () => {
+  it("llm start sets the trace id and activates the Trellar agent", () => {
     const g = mk();
     const id = uuid();
     g.handleLLMStart({ name: "X" }, ["p"], id, undefined);
     expect(g.traceId).toBe(id);
-    expect(isGuardActive(g)).toBe(true);
+    expect(isTrellarAgentActive(g)).toBe(true);
   });
 
   it("a non-root start does not touch the trace id", () => {
@@ -63,30 +63,30 @@ describe("run boundary on the LLM events", () => {
     expect(g.trellarEvaluateResult).toBeNull();
   });
 
-  it("llm end records the response and releases the guard", async () => {
+  it("llm end records the response and releases the Trellar agent", async () => {
     const g = mk();
     const id = uuid();
     g.handleChatModelStart({ name: "X" }, [[new HumanMessage("hi")]], id, undefined);
     await g.handleLLMEnd(makeLlmResult({ message: makeAiMessage("answer") }), id, undefined);
     expect(g.events.at(-1)!["output"]).toEqual({ response: "answer" });
-    expect(isGuardActive(g)).toBe(false);
+    expect(isTrellarAgentActive(g)).toBe(false);
   });
 
-  it("a root llm error releases the guard; a non-root one does not", () => {
+  it("a root llm error releases the Trellar agent; a non-root one does not", () => {
     const g = mk();
     const id = uuid();
     g.handleChatModelStart({ name: "X" }, [[new HumanMessage("hi")]], id, undefined);
     g.handleLLMError(new Error("child"), uuid(), id);
-    expect(isGuardActive(g)).toBe(true);
+    expect(isTrellarAgentActive(g)).toBe(true);
     g.handleLLMError(new Error("boom"), id, undefined);
-    expect(isGuardActive(g)).toBe(false);
+    expect(isTrellarAgentActive(g)).toBe(false);
     expect(g.events.at(-1)).toMatchObject({ event: "on_llm_error", error: "boom" });
   });
 });
 
 describe("auto-evaluation", () => {
   async function run(mode: ObservabilityMode, evaluated = false) {
-    const evaluate = vi.spyOn(agentLoop, "evaluateWithGuard").mockResolvedValue(OK);
+    const evaluate = vi.spyOn(agentLoop, "evaluateWithTrellarAgent").mockResolvedValue(OK);
     const g = mk(mode);
     const id = uuid();
     g.handleChatModelStart({ name: "X" }, [[new HumanMessage("hi")]], id, undefined);
@@ -111,7 +111,7 @@ describe("auto-evaluation", () => {
 
   it("stores a failure as trellarEvaluateError and never throws", async () => {
     const boom = new Error("backend down");
-    vi.spyOn(agentLoop, "evaluateWithGuard").mockRejectedValue(boom);
+    vi.spyOn(agentLoop, "evaluateWithTrellarAgent").mockRejectedValue(boom);
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const g = mk("always");
     const id = uuid();
@@ -127,9 +127,9 @@ describe("a real bare llm.invoke() call", () => {
     const calls = mockFetch();
     process.env["TRELLAR_API_KEY"] = "k";
     const llm = new FakeListChatModel({ responses: ["the answer"] });
-    const guard = mk("always");
+    const trellarAgent = mk("always");
     const reply = await llm.invoke([new SystemMessage("be brief"), new HumanMessage("question")], {
-      callbacks: [guard],
+      callbacks: [trellarAgent],
     });
 
     expect(reply.content).toBe("the answer");
@@ -140,7 +140,7 @@ describe("a real bare llm.invoke() call", () => {
     expect(body.context[0].input).toEqual({ system: "be brief", human: "question" });
     expect(body.context[1].output).toEqual({ response: "the answer" });
     assertValidAgentLoopRequest(body);
-    expect(guard.trellarEvaluateResult?.score).toBe(8);
-    expect(isGuardActive(guard)).toBe(false);
+    expect(trellarAgent.trellarEvaluateResult?.score).toBe(8);
+    expect(isTrellarAgentActive(trellarAgent)).toBe(false);
   });
 });

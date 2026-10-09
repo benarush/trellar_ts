@@ -1,14 +1,15 @@
 /**
- * LangChain / LangGraph guards. Requires ``@langchain/core`` (optional peer dependency).
+ * LangChain / LangGraph agents. Requires ``@langchain/core`` (optional peer dependency).
  *
  * ```ts
- * import { getAgentGuard } from "trellar/langchain";
+ * import { trellarLangchainAgent } from "trellar/langchain";
  * import { evaluateConfidence } from "trellar";
  * ```
  */
 import { ObservabilityMode } from "./agentLoop.js";
-import { AgentGuardCallback } from "./callbacks/langchain/langchainCallback.js";
-import { SingleCallGuardCallback } from "./callbacks/langchain/singleLangchainCallback.js";
+import { deprecatedAlias } from "./deprecation.js";
+import { LangchainAgentCallback } from "./callbacks/langchain/langchainCallback.js";
+import { LangchainSingleCallCallback } from "./callbacks/langchain/singleLangchainCallback.js";
 
 export {
   evaluateConfidence,
@@ -18,8 +19,8 @@ export {
   type AgentLoopResult,
   type EvaluateConfidenceOptions,
 } from "./agentLoop.js";
-export { runWithGuard } from "./context.js";
-export type { AgentGuardCallback, SingleCallGuardCallback };
+export { runWithTrellarAgent, runWithGuard } from "./context.js";
+export type { LangchainAgentCallback, LangchainSingleCallCallback };
 
 /**
  * Create a callback handler that identifies this graph to the Trellar backend.
@@ -30,18 +31,18 @@ export type { AgentGuardCallback, SingleCallGuardCallback };
  * Different graphs in the same repo must use different names.
  *
  * ```ts
- * const guard = getAgentGuard("research-agent");
+ * const trellarAgent = trellarLangchainAgent("research-agent");
  *
  * async function confidenceGate(state) {
  *   const result = await evaluateConfidence();
  *   // ...
  * }
  *
- * await graph.invoke(input, { callbacks: [guard] });
+ * await graph.invoke(input, { callbacks: [trellarAgent] });
  * ```
  *
  * ``evaluateConfidence()`` must be called from inside a graph node, while the
- * run is still in progress -- not after ``graph.invoke()`` returns. The guard
+ * run is still in progress -- not after ``graph.invoke()`` returns. The Trellar agent
  * is released as soon as the root run ends, so a call made after ``invoke()``
  * returns will throw.
  *
@@ -49,36 +50,46 @@ export type { AgentGuardCallback, SingleCallGuardCallback };
  * @param observabilityMode Controls whether ``evaluateConfidence()`` is
  *   auto-triggered when the graph run finishes. Defaults to ``ObservabilityMode.NONE``.
  */
-export function getAgentGuard(
+export function trellarLangchainAgent(
   agentName: string,
   observabilityMode: ObservabilityMode = ObservabilityMode.NONE,
-): AgentGuardCallback {
-  return new AgentGuardCallback({ agentName, observabilityMode });
+): LangchainAgentCallback {
+  return new LangchainAgentCallback({ agentName, observabilityMode });
 }
 
 /**
  * Create a callback handler for a single bare LLM call (no LangGraph/chain wrapper).
  *
- * Use this instead of ``getAgentGuard`` when you are calling a chat model
+ * Use this instead of ``trellarLangchainAgent`` when you are calling a chat model
  * directly (e.g. ``llm.invoke(...)``) rather than invoking a graph or an agent
  * built with ``createAgent`` (which is itself a compiled graph, and already
- * works with ``getAgentGuard``).
+ * works with ``trellarLangchainAgent``).
  *
  * A bare ``llm.invoke()`` call has no node to call ``evaluateConfidence()``
- * from mid-run, and the guard is released as soon as the call finishes -- so a
+ * from mid-run, and the Trellar agent is released as soon as the call finishes -- so a
  * manual call is never supported here. Use ``ObservabilityMode.ALWAYS`` (or
  * ``IF_NOT_EVALUATED``) to auto-trigger the evaluation, then read the result
- * off the guard:
+ * off the Trellar agent:
  *
  * ```ts
- * const guard = getSingleCallGuard("single-llm-call", ObservabilityMode.ALWAYS);
- * await llm.invoke(messages, { callbacks: [guard] });
- * const result = guard.trellarEvaluateResult;
+ * const trellarAgent = trellarLangchainSingleCall("single-llm-call", ObservabilityMode.ALWAYS);
+ * await llm.invoke(messages, { callbacks: [trellarAgent] });
+ * const result = trellarAgent.trellarEvaluateResult;
  * ```
  */
-export function getSingleCallGuard(
+export function trellarLangchainSingleCall(
   agentName: string,
   observabilityMode: ObservabilityMode = ObservabilityMode.NONE,
-): SingleCallGuardCallback {
-  return new SingleCallGuardCallback({ agentName, observabilityMode });
+): LangchainSingleCallCallback {
+  return new LangchainSingleCallCallback({ agentName, observabilityMode });
 }
+
+/** @deprecated Use {@link trellarLangchainAgent}. */
+export const getAgentGuard = deprecatedAlias("getAgentGuard", "trellarLangchainAgent", trellarLangchainAgent);
+
+/** @deprecated Use {@link trellarLangchainSingleCall}. */
+export const getSingleCallGuard = deprecatedAlias(
+  "getSingleCallGuard",
+  "trellarLangchainSingleCall",
+  trellarLangchainSingleCall,
+);

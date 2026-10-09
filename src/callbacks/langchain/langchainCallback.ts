@@ -1,12 +1,12 @@
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import { AsyncLocalStorageProviderSingleton } from "@langchain/core/singletons";
 
-import { evaluateWithGuard, ObservabilityMode, parseObservabilityMode } from "../../agentLoop.js";
+import { evaluateWithTrellarAgent, ObservabilityMode, parseObservabilityMode } from "../../agentLoop.js";
 import {
-  activateGuard,
-  type GuardState,
-  registerGuardResolver,
-  releaseGuard,
+  activateTrellarAgent,
+  type TrellarAgentState,
+  registerTrellarAgentResolver,
+  releaseTrellarAgent,
 } from "../../context.js";
 import { logger } from "../../logger.js";
 import { buildContext, compactJson, hashTools, pyJsonDumps } from "../common.js";
@@ -22,8 +22,8 @@ import {
 
 type Obj = Record<string, any>;
 
-/** Marker used by the async-context resolver to recognise trellar guards. */
-export const TRELLAR_GUARD = Symbol.for("trellar.langchain.guard");
+/** Marker used by the async-context resolver to recognise Trellar agents. */
+export const TRELLAR_AGENT = Symbol.for("trellar.langchain.agent");
 
 interface PendingLlmToolCall {
   event: Obj;
@@ -47,7 +47,7 @@ function lastOf(id: unknown): string | undefined {
 /**
  * Internal LangChain callback handler that tracks agent lifecycle events.
  *
- * This class is not part of the public API. Use ``getAgentGuard`` to obtain an
+ * This class is not part of the public API. Use ``trellarLangchainAgent`` to obtain an
  * instance.
  *
  * Accumulates all graph events into ``events`` as a list of plain objects.
@@ -66,15 +66,15 @@ function lastOf(id: unknown): string | undefined {
  * - extra payload fields depending on the event type, notably ``is_mcp_tool``
  *   (boolean) on ``on_tool_end`` events -- see ``isMcpToolRun``.
  */
-export class AgentGuardCallback extends BaseCallbackHandler implements GuardState {
-  name = "trellar_agent_guard";
+export class LangchainAgentCallback extends BaseCallbackHandler implements TrellarAgentState {
+  name = "trellar_langchain_agent";
   // LangChain JS runs callbacks in the background by default; the events must
   // be recorded before the next node (e.g. the gate that calls
   // evaluateConfidence) starts, so make LangChain wait for this handler.
   override awaitHandlers = true;
   override raiseError = false;
 
-  readonly [TRELLAR_GUARD] = true;
+  readonly [TRELLAR_AGENT] = true;
 
   /** Maps the LangChain message `type` attribute to a human-readable prefix. */
   static readonly MESSAGE_PREFIXES: Record<string, string> = {
@@ -130,7 +130,7 @@ export class AgentGuardCallback extends BaseCallbackHandler implements GuardStat
   }
 
   /**
-   * Tell the guard about tools so their descriptions are reported on ``on_tool_start``.
+   * Tell the Trellar agent about tools so their descriptions are reported on ``on_tool_start``.
    *
    * Python's LangChain serializes the tool (name *and* description) into every tool
    * callback. LangChain JS does not: a tool that is invoked directly
@@ -158,7 +158,7 @@ export class AgentGuardCallback extends BaseCallbackHandler implements GuardStat
    */
   static serializeMessageObj(msg: unknown): string {
     if (isMessageLike(msg)) {
-      const prefix = AgentGuardCallback.MESSAGE_PREFIXES[String(msg.type).toLowerCase()] ?? "MESSAGE";
+      const prefix = LangchainAgentCallback.MESSAGE_PREFIXES[String(msg.type).toLowerCase()] ?? "MESSAGE";
       let content: unknown = msg.content;
       if (typeof content !== "string") {
         // content can be a list of dicts (e.g. multimodal messages)
@@ -180,7 +180,7 @@ export class AgentGuardCallback extends BaseCallbackHandler implements GuardStat
    * is JSON-serializable and unambiguous about which role produced the content.
    */
   static serializeMessages(messages: unknown[]): string[] {
-    return messages.map((msg) => AgentGuardCallback.serializeMessageObj(msg));
+    return messages.map((msg) => LangchainAgentCallback.serializeMessageObj(msg));
   }
 
   /**
@@ -262,7 +262,7 @@ export class AgentGuardCallback extends BaseCallbackHandler implements GuardStat
     this.availableTools = {};
     this._evaluated = false;
     // Self-register so evaluateConfidence() can pick us up automatically.
-    activateGuard(this);
+    activateTrellarAgent(this);
   }
 
   // ------------------------------------------------------------------
@@ -411,7 +411,7 @@ export class AgentGuardCallback extends BaseCallbackHandler implements GuardStat
       (typeof tool?.["description"] === "string" && tool["description"]) ||
       (toolName ? this._registeredToolDescriptions.get(toolName) : undefined) ||
       findToolDescription(this.availableTools, toolName);
-    this._register(runId, toolName, "tool", { mcp: AgentGuardCallback.isMcpToolRun(metadata, undefined) });
+    this._register(runId, toolName, "tool", { mcp: LangchainAgentCallback.isMcpToolRun(metadata, undefined) });
 
     // The parsed argument dict, when the input is JSON (LangChain JS passes the
     // arguments as a JSON string).
@@ -439,8 +439,8 @@ export class AgentGuardCallback extends BaseCallbackHandler implements GuardStat
     // Must run BEFORE serialization: serializeMessageObj only looks at
     // `.type`/`.content` and would otherwise silently drop `.artifact`.
     const registered = this._runRegistry.get(runId);
-    const isMcpTool = Boolean(registered?.mcp) || AgentGuardCallback.isMcpToolRun(undefined, output);
-    const serializedOutput = AgentGuardCallback.serializeMessageObj(output);
+    const isMcpTool = Boolean(registered?.mcp) || LangchainAgentCallback.isMcpToolRun(undefined, output);
+    const serializedOutput = LangchainAgentCallback.serializeMessageObj(output);
     this._record("on_tool_end", runId, parentRunId, { output: serializedOutput, is_mcp_tool: isMcpTool });
     this._attachToolResponseToLlm(registered?.name ?? undefined, serializedOutput, parentRunId);
   }
@@ -521,9 +521,9 @@ export class AgentGuardCallback extends BaseCallbackHandler implements GuardStat
     let safeInputs: unknown[];
     const inp = inputs as Obj | unknown[] | null | undefined;
     if (inp !== null && typeof inp === "object" && !Array.isArray(inp) && "messages" in inp) {
-      safeInputs = AgentGuardCallback.serializeMessages(toArray((inp as Obj)["messages"]));
+      safeInputs = LangchainAgentCallback.serializeMessages(toArray((inp as Obj)["messages"]));
     } else if (Array.isArray(inp)) {
-      safeInputs = AgentGuardCallback.serializeMessages(inp);
+      safeInputs = LangchainAgentCallback.serializeMessages(inp);
     } else {
       safeInputs = [toJsonableEvent(inputs)];
     }
@@ -548,7 +548,7 @@ export class AgentGuardCallback extends BaseCallbackHandler implements GuardStat
     if (out !== null && typeof out === "object" && !Array.isArray(out) && "messages" in (out as Obj)) {
       out = {
         ...(out as Obj),
-        messages: AgentGuardCallback.serializeMessages(toArray((out as Obj)["messages"])),
+        messages: LangchainAgentCallback.serializeMessages(toArray((out as Obj)["messages"])),
       };
     }
     this._record("on_chain_end", runId, parentRunId, { outputs: toJsonableEvent(out) });
@@ -557,7 +557,7 @@ export class AgentGuardCallback extends BaseCallbackHandler implements GuardStat
       await this._maybeAutoEvaluate();
       // Release the slot so the next top-level run starts from a clean state
       // instead of inheriting this run's handler.
-      releaseGuard(this);
+      releaseTrellarAgent(this);
     }
   }
 
@@ -571,7 +571,7 @@ export class AgentGuardCallback extends BaseCallbackHandler implements GuardStat
     if (this.observabilityMode === ObservabilityMode.NONE) return;
     if (this.observabilityMode === ObservabilityMode.IF_NOT_EVALUATED && this._evaluated) return;
     try {
-      await evaluateWithGuard(this, { _observabilityCall: true });
+      await evaluateWithTrellarAgent(this, { _observabilityCall: true });
     } catch (error) {
       logger.warning("Auto-triggered evaluateConfidence() failed", error);
     }
@@ -582,7 +582,7 @@ export class AgentGuardCallback extends BaseCallbackHandler implements GuardStat
     if (parentRunId === undefined || parentRunId === null) {
       // Root run failing -- handleChainEnd will never fire for this runId
       // (they are mutually exclusive), so release the slot here too.
-      releaseGuard(this);
+      releaseTrellarAgent(this);
     }
   }
 
@@ -608,7 +608,7 @@ function errorText(error: unknown): string {
 
 /**
  * Coerce *value* to JSON-safe data. Message objects become labeled strings
- * (``"AI MESSAGE: ..."``), mirroring the Python guard's ``_to_jsonable``.
+ * (``"AI MESSAGE: ..."``), mirroring the Python callback's ``_to_jsonable``.
  */
 function toJsonableEvent(value: unknown, seen: WeakSet<object> = new WeakSet()): any {
   if (value === null || value === undefined) return null;
@@ -620,7 +620,7 @@ function toJsonableEvent(value: unknown, seen: WeakSet<object> = new WeakSet()):
   if (seen.has(obj)) return String(obj);
   seen.add(obj);
   try {
-    if (isMessageLike(obj)) return AgentGuardCallback.serializeMessageObj(obj);
+    if (isMessageLike(obj)) return LangchainAgentCallback.serializeMessageObj(obj);
     if (Array.isArray(obj)) return obj.map((v) => toJsonableEvent(v, seen));
     if (obj instanceof Map) {
       const out: Obj = {};
@@ -652,10 +652,10 @@ function toJsonableEvent(value: unknown, seen: WeakSet<object> = new WeakSet()):
 /**
  * Inside any LangGraph node / tool / runnable, LangChain JS exposes the
  * running config through its own AsyncLocalStorage. The config's callbacks
- * contain this run's guard, so concurrent ``graph.invoke()`` calls each see
- * their own guard with no extra wiring.
+ * contain this run's Trellar agent, so concurrent ``graph.invoke()`` calls each see
+ * their own Trellar agent with no extra wiring.
  */
-function resolveFromRunnableConfig(): GuardState | undefined {
+function resolveFromRunnableConfig(): TrellarAgentState | undefined {
   const config = AsyncLocalStorageProviderSingleton.getRunnableConfig() as Obj | undefined;
   const callbacks = config?.["callbacks"];
   if (!callbacks) return undefined;
@@ -663,11 +663,11 @@ function resolveFromRunnableConfig(): GuardState | undefined {
     ? callbacks
     : [...((callbacks as Obj)["handlers"] ?? []), ...((callbacks as Obj)["inheritableHandlers"] ?? [])];
   for (const handler of handlers) {
-    if (handler && typeof handler === "object" && (handler as Obj)[TRELLAR_GUARD as unknown as string] === true) {
-      return handler as GuardState;
+    if (handler && typeof handler === "object" && (handler as Obj)[TRELLAR_AGENT as unknown as string] === true) {
+      return handler as TrellarAgentState;
     }
   }
   return undefined;
 }
 
-registerGuardResolver(resolveFromRunnableConfig);
+registerTrellarAgentResolver(resolveFromRunnableConfig);
