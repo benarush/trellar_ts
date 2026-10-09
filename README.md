@@ -7,7 +7,7 @@
 
 The TypeScript / Node.js SDK for **Trellar**, the trust layer for autonomous multi-agent systems. Trellar is an AI governance platform that sits above your existing agent frameworks (LangChain, LangGraph, Strands Agents and more) and gives your team visibility and control over what your agents do in production, so you can extend their autonomy with confidence.
 
-Connecting takes one callback on your agent run. Trellar monitors the run outside the execution path, so it adds no latency to your agents, and it evaluates the run against what each agent is meant to do. Call `evaluateConfidence()` wherever you want a score, either to gate the next step or just to record it. Context, trace ID, and agent name are picked up automatically — no manual wiring.
+Connecting takes one callback on your agent run. Trellar monitors the run outside the execution path, so it adds no latency to your agents, and it evaluates the run against what each agent is meant to do. Trellar can evaluate each run automatically when it finishes. For finer control, call `evaluateConfidence()` wherever you want a score, either to gate the next step or just to record it. Context, trace ID, and agent name are picked up automatically — no manual wiring.
 
 This is a one-to-one port of the Python [`trellar`](../README.md) package: same callbacks, same events, same payload sent to the back-end.
 
@@ -58,25 +58,43 @@ import { trellarStrandsAgent, trellarStrandsSingleCall } from "trellar/strands";
 
 ## Quick Start (LangChain / LangGraph)
 
+Start by observing your agent. Set your API key, add the Trellar callback to your run, and Trellar evaluates the run automatically when it finishes. You don't need to call `evaluateConfidence()` yourself.
+
+```bash
+export TRELLAR_API_KEY=your-api-key
+```
+
 ```ts
-import { evaluateConfidence } from "trellar";
+import { createAgent, tool } from "langchain";
+import { z } from "zod";
+import { ObservabilityMode } from "trellar";
 import { trellarLangchainAgent } from "trellar/langchain";
+
+const searchDocs = tool(async () => "The office opens at 9am.", {
+  name: "search_docs",
+  description: "Search the internal docs.",
+  schema: z.object({ query: z.string() }),
+});
+
+const graph = createAgent({ model, tools: [searchDocs] });
 
 // agentName must be a stable, unique name for this agent graph — the
 // backend uses it to track the graph's network profile across runs.
-const trellarAgent = trellarLangchainAgent("research-agent");
+const trellarAgent = trellarLangchainAgent("research-agent", ObservabilityMode.ALWAYS);
 
-// call evaluateConfidence() from a node, while the run is still in progress —
-// context, trace_id, and agent_name are picked up from the Trellar agent automatically
-async function reportConfidence(state: State) {
-  const result = await evaluateConfidence();
-  console.log(result.score);       // number, 1-10
-  console.log(result.explanation); // string, human-readable reasoning
-  return state;
-}
-
-await graph.invoke(inputs, { callbacks: [trellarAgent] });
+// The run is captured and evaluated when invoke() finishes.
+// Context, trace_id, and agent_name are picked up automatically.
+await graph.invoke(
+  { messages: [{ role: "user", content: "What time does the office open?" }] },
+  { callbacks: [trellarAgent] },
+);
 ```
+
+The run is sent to Trellar when `invoke()` returns, and the result appears in your dashboard at [trellar.io](https://trellar.io).
+
+> **Evaluation needs some context.** Trellar scores the run from the events it captured, so the run should include at least one agent call or tool call. A run with nothing in it gives the evaluation too little to work with.
+
+Want to read the score in your code, or stop the graph when it's low? See [Where to call `evaluateConfidence`](#where-to-call-evaluateconfidence).
 
 > **Note:** forward the node `config` into nested runnables (`model.invoke(msgs, config)`) so child runs are reported to the Trellar agent — the same rule as for any LangChain callback.
 
@@ -163,7 +181,7 @@ As in Python, the Trellar agent is released as soon as the root run ends, so cal
 
 Call it from a graph node, at the point in the run you want scored, while the run is still in progress. The payload is the events captured **so far** — later nodes are not included.
 
-There are two ways to use the result:
+There are two ways to get a score:
 
 ### 1. Gate — validate before the graph continues
 
@@ -177,16 +195,19 @@ async function confidenceGate(state: State) {
 }
 ```
 
-### 2. Observe — send a validation, do not restrict the graph
+### 2. Observe — record a score, do not restrict the graph
 
-Put the call in any node where you want a score recorded. Store or log `result` if you want it; do not branch on it. The graph continues either way.
+If you only want the run scored and recorded, you don't need a node or a manual call. Set an `ObservabilityMode` when you create the Trellar agent, and Trellar evaluates the run when it finishes. The graph is never affected.
 
 ```ts
-async function reportConfidence() {
-  const result = await evaluateConfidence();
-  return { confidenceScore: result.score, confidenceExplanation: result.explanation };
-}
+import { ObservabilityMode } from "trellar";
+import { trellarLangchainAgent } from "trellar/langchain";
+
+const trellarAgent = trellarLangchainAgent("research-agent", ObservabilityMode.ALWAYS);
+await graph.invoke(inputs, { callbacks: [trellarAgent] });
 ```
+
+Use `ObservabilityMode.IF_NOT_EVALUATED` to combine both ways: gate nodes score the run where you need them, and any run that no node scored is still evaluated when it finishes. See [`ObservabilityMode`](#observabilitymode) for the full list of values.
 
 ---
 
