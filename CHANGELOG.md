@@ -26,5 +26,5 @@ callbacks, same events and text formats, and the same payload sent to
 - ESM + CommonJS builds with type declarations; Node.js 20, 22, 24 and 26
   (Strands: Node.js 22+).
 
-[Unreleased]: https://github.com/benarush/AITL/compare/v0.6.1...HEAD
-[0.6.1]: https://github.com/benarush/AITL/releases/tag/v0.6.1
+[Unreleased]: https://github.com/benarush/trellar_ts/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/benarush/trellar_ts/releases/tag/v0.6.1

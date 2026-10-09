@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/trellar.svg)](https://www.npmjs.com/package/trellar)
 [![Node](https://img.shields.io/node/v/trellar.svg)](https://www.npmjs.com/package/trellar)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://github.com/benarush/AITL/actions/workflows/ci.yml/badge.svg)](https://github.com/benarush/AITL/actions/workflows/ci.yml)
+[![CI](https://github.com/benarush/trellar_ts/actions/workflows/ci.yml/badge.svg)](https://github.com/benarush/trellar_ts/actions/workflows/ci.yml)
 
 A lightweight TypeScript / Node.js client for the **Trellar** confidence evaluation API. Attach a callback to your LangChain / LangGraph or Strands Agents run, then call `evaluateConfidence()` when you want a score. Context, trace ID, and agent name are picked up automatically — no manual wiring.
 

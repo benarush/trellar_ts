@@ -13,13 +13,13 @@
   ],
   "license": "MIT",
   "author": "Tomer Ben Harush",
-  "homepage": "https://github.com/benarush/AITL",
+  "homepage": "https://github.com/benarush/trellar_ts",
   "bugs": {
-    "url": "https://github.com/benarush/AITL/issues"
+    "url": "https://github.com/benarush/trellar_ts/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/benarush/AITL.git"
+    "url": "git+https://github.com/benarush/trellar_ts.git"
   },
   "type": "module",
   "sideEffects": false,
