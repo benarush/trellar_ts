@@ -1,0 +1,115 @@
+{
+  "name": "trellar",
+  "version": "0.6.1",
+  "description": "Client library for the Trellar confidence evaluation API",
+  "keywords": [
+    "agent",
+    "llm",
+    "langchain",
+    "langgraph",
+    "strands",
+    "confidence",
+    "ai"
+  ],
+  "license": "MIT",
+  "author": "Tomer Ben Harush",
+  "homepage": "https://github.com/benarush/AITL",
+  "bugs": {
+    "url": "https://github.com/benarush/AITL/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benarush/AITL.git"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./langchain": {
+      "import": {
+        "types": "./dist/langchain.d.ts",
+        "default": "./dist/langchain.js"
+      },
+      "require": {
+        "types": "./dist/langchain.d.cts",
+        "default": "./dist/langchain.cjs"
+      }
+    },
+    "./strands": {
+      "import": {
+        "types": "./dist/strands.d.ts",
+        "default": "./dist/strands.js"
+      },
+      "require": {
+        "types": "./dist/strands.d.cts",
+        "default": "./dist/strands.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "langchain": [
+        "./dist/langchain.d.ts"
+      ],
+      "strands": [
+        "./dist/strands.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src tests",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build && npm run smoke",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "peerDependencies": {
+    "@langchain/core": "^1.0.0",
+    "@strands-agents/sdk": "^1.19.0"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/core": {
+      "optional": true
+    },
+    "@strands-agents/sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@langchain/core": "^1.2.0",
+    "@langchain/langgraph": "^1.4.0",
+    "@strands-agents/sdk": "^1.19.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.2.0",
+    "zod": "^4.1.12"
+  }
+}
