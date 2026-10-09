@@ -109,11 +109,12 @@ import { trellarStrandsAgent } from "trellar/strands";
 
 const trellarAgent = trellarStrandsAgent("research-agent");
 
-// Give every agent a stable name and a unique id, and register the Trellar agent as a plugin on each agent...
-const searcher = new Agent({ id: "searcher", name: "searcher", plugins: [trellarAgent] });
-const reporter = new Agent({ id: "reporter", name: "reporter", plugins: [trellarAgent] });
+// Give every agent a stable name and a unique id.
+const searcher = new Agent({ id: "searcher", name: "searcher" });
+const reporter = new Agent({ id: "reporter", name: "reporter" });
 
-// ...and on the Graph/Swarm, so the whole run is one trace.
+// Register the Trellar agent as a plugin on the Graph/Swarm: the whole run is one trace, and
+// every node's Agent is bound automatically (no need for `plugins: [trellarAgent]` on each one).
 const graph = new Graph({
   nodes: [searcher, reporter],
   edges: [["searcher", "reporter"]],
@@ -122,6 +123,8 @@ const graph = new Graph({
 
 await graph.invoke("Find me something to report on");
 ```
+
+A standalone Agent (no Graph/Swarm) still needs `new Agent({ plugins: [trellarAgent] })`. Passing the plugin explicitly to a graph's Agents as well is harmless: registering twice is a no-op. Once bound, an Agent keeps the hook.
 
 Call `evaluateConfidence()` from inside the run (a graph node or a tool), exactly as with LangChain. `ObservabilityMode` works the same way. See `orchestrations_examples/our_lab_with_aviran/car_stocks_buy_mcp_celery.py/ts/` for full examples.
 

@@ -74,9 +74,10 @@ function inputText(input: unknown): string {
 /**
  * Hook provider that records a Strands run for the Trellar backend.
  *
- * Not public API; use ``trellarStrandsAgent``. Register it as a plugin on every
- * Agent (``new Agent({ plugins: [trellarAgent] })``) and on the Graph/Swarm
- * (``new Graph({ ..., plugins: [trellarAgent] })``).
+ * Not public API; use ``trellarStrandsAgent``. Register it as a plugin on the
+ * Graph/Swarm (``new Graph({ ..., plugins: [trellarAgent] })``): every node's Agent
+ * is then bound automatically. A standalone Agent (no Graph) still needs
+ * ``new Agent({ plugins: [trellarAgent] })``. Registering twice is safe.
  */
 export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAgentState {
   readonly name = "trellar-strands-trellarAgent";
@@ -109,6 +110,9 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
   _executorParents = new Map<object, string>();
   /** nodes whose ``stream`` was wrapped to run in this Trellar agent's scope */
   _patchedNodes = new WeakSet<object>();
+  /** agents / orchestrators already bound (explicitly or auto-bound); weak, and kept across runs */
+  _boundAgents = new WeakSet<object>();
+  _boundOrchestrators = new WeakSet<object>();
   /** root / agent chain events whose input text is only known after the hook fired */
   _pendingInputEvents = new Map<string, Obj>();
 
@@ -238,6 +242,10 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
 
   /** Strands ``Plugin`` entry point: called once per Agent the Trellar agent is attached to. */
   initAgent(agent: LocalAgent): void {
+    // Idempotent: an explicit ``plugins: [...]`` plus auto-binding from the Graph must not
+    // register twice, or every event would be recorded twice.
+    if (this._boundAgents.has(agent)) return;
+    this._boundAgents.add(agent);
     agent.addHook(BeforeInvocationEvent, (e) => this._onAgentStart(e));
     agent.addHook(MessageAddedEvent, (e) => this._onMessageAdded(e));
     agent.addHook(AfterInvocationEvent, (e) => this._onAgentEnd(e));
@@ -267,6 +275,8 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
 
   /** Strands ``MultiAgentPlugin`` entry point: called once per Graph/Swarm. */
   initMultiAgent(orchestrator: MultiAgent): void {
+    if (this._boundOrchestrators.has(orchestrator)) return;
+    this._boundOrchestrators.add(orchestrator);
     this._scopeNodes(orchestrator as unknown as Obj);
     orchestrator.addHook(BeforeMultiAgentInvocationEvent, (e) => this._onMultiStart(e));
     orchestrator.addHook(AfterMultiAgentInvocationEvent, (e) => this._onMultiEnd(e));
@@ -287,6 +297,8 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const trellarAgent = this;
     nodes.forEach((node, nodeId) => {
+      // Bind the node's Agent so users only register us on the Graph (no-op if already bound).
+      if (node["agent"] && typeof node["agent"] === "object") trellarAgent.initAgent(node["agent"] as LocalAgent);
       if (trellarAgent._patchedNodes.has(node) || typeof node["stream"] !== "function") return;
       trellarAgent._patchedNodes.add(node);
       const original = node["stream"].bind(node) as (...args: unknown[]) => AsyncGenerator<unknown, unknown, undefined>;

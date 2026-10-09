@@ -27,15 +27,17 @@ export type { StrandsAgentCallback, StrandsSingleCallCallback };
 /**
  * Create a plugin that identifies a Strands Agents network to Trellar.
  *
- * Register the same Trellar agent on every Agent and on the Graph/Swarm (so the whole
- * run is one trace):
+ * Register the Trellar agent on the Graph/Swarm (so the whole run is one trace); every
+ * node's Agent is bound automatically:
  *
  * ```ts
  * const trellarAgent = trellarStrandsAgent("research-agent");
  *
- * const agent = new Agent({ name: "searcher", plugins: [trellarAgent] });
- * const graph = new Graph({ nodes: [...], edges: [...], plugins: [trellarAgent] });
+ * const agent = new Agent({ name: "searcher" });
+ * const graph = new Graph({ nodes: [agent, ...], edges: [...], plugins: [trellarAgent] });
  * ```
+ *
+ * A standalone Agent (no Graph) needs `new Agent({ plugins: [trellarAgent] })`.
  *
  * Give every agent a stable ``name``: it is how the backend tells agents apart.
  * As with ``trellarLangchainAgent``, call ``evaluateConfidence`` from inside the run
