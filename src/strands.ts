@@ -57,11 +57,12 @@ export function trellarStrandsAgent(
  * Create a plugin for one Strands Agent called once (no Graph/Swarm).
  *
  * The run is over when the call returns, so a manual ``evaluateConfidence`` is
- * not possible. Use ``ObservabilityMode.ALWAYS`` (or ``IF_NOT_EVALUATED``) and
- * read the outcome off the Trellar agent:
+ * not possible; the run is therefore evaluated automatically
+ * (``ObservabilityMode.ALWAYS`` is the default here, pass ``NONE`` to only record).
+ * Read the outcome off the Trellar agent:
  *
  * ```ts
- * const trellarAgent = trellarStrandsSingleCall("faq-agent", ObservabilityMode.ALWAYS);
+ * const trellarAgent = trellarStrandsSingleCall("faq-agent");
  * const agent = new Agent({ name: "faq", plugins: [trellarAgent] });
  * await agent.invoke("What time does the office open?");
  * const result = trellarAgent.trellarEvaluateResult;
@@ -73,7 +74,7 @@ export function trellarStrandsAgent(
  */
 export function trellarStrandsSingleCall(
   agentName: string,
-  observabilityMode: ObservabilityMode = ObservabilityMode.NONE,
+  observabilityMode: ObservabilityMode = ObservabilityMode.ALWAYS,
 ): StrandsSingleCallCallback {
   return new StrandsSingleCallCallback({ agentName, observabilityMode });
 }

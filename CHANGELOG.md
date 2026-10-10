@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   idempotent: nothing is recorded twice.
 
 ### Changed
+- `trellarStrandsSingleCall` and `trellarLangchainSingleCall` now default to `ObservabilityMode.ALWAYS` (was `NONE`): a single call cannot be evaluated manually, so with no mode it used to evaluate nothing. Pass `ObservabilityMode.NONE` to keep the old behavior.
 - The public factory functions are renamed to product-friendly names (matching
   the Python package):
   `getAgentGuard` -> `trellarLangchainAgent`,

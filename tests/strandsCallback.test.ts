@@ -628,9 +628,18 @@ describe("single call", () => {
     expect(trellarAgent.trellarEvaluateResult).toBeNull();
   });
 
-  it("NONE mode does not evaluate", async () => {
+  it("defaults to ALWAYS: evaluates without a mode argument", async () => {
+    // A single call can't be evaluated manually, so no mode means evaluate.
     const calls = mockFetch();
     const trellarAgent = trellarStrandsSingleCall("t");
+    await makeAgent(trellarAgent, [text("hi")]).invoke("go");
+    expect(calls).toHaveLength(1);
+    expect(trellarAgent.trellarEvaluateResult?.score).toBe(8);
+  });
+
+  it("NONE mode does not evaluate", async () => {
+    const calls = mockFetch();
+    const trellarAgent = trellarStrandsSingleCall("t", ObservabilityMode.NONE);
     await makeAgent(trellarAgent, [text("hi")]).invoke("go");
     expect(calls).toHaveLength(0);
     expect(trellarAgent.trellarEvaluateResult).toBeNull();

@@ -9,7 +9,7 @@ The TypeScript / Node.js SDK for **Trellar**, the trust layer for autonomous mul
 
 Connecting takes one callback on your agent run. Trellar monitors the run outside the execution path, so it adds no latency to your agents, and it evaluates the run against what each agent is meant to do. Trellar can evaluate each run automatically when it finishes. For finer control, call `evaluateConfidence()` wherever you want a score, either to gate the next step or just to record it. Context, trace ID, and agent name are picked up automatically — no manual wiring.
 
-This is a one-to-one port of the Python [`trellar`](../README.md) package: same callbacks, same events, same payload sent to the back-end.
+This package has the same features as the Python [`trellar`](../README.md) package.
 
 This library cannot be used without an API key from [trellar.io](https://trellar.io).
 
@@ -104,10 +104,11 @@ Want to read the score in your code, or stop the graph when it's low? See [Where
 
 ```ts
 import { Agent, Graph } from "@strands-agents/sdk"; // Graph also lives in "@strands-agents/sdk/multiagent"
-import { evaluateConfidence } from "trellar";
+import { ObservabilityMode } from "trellar";
 import { trellarStrandsAgent } from "trellar/strands";
 
-const trellarAgent = trellarStrandsAgent("research-agent");
+// ALWAYS: the run is evaluated automatically when it finishes (no manual call needed).
+const trellarAgent = trellarStrandsAgent("research-agent", ObservabilityMode.ALWAYS);
 
 // Give every agent a stable name and a unique id.
 const searcher = new Agent({ id: "searcher", name: "searcher" });
@@ -124,22 +125,21 @@ const graph = new Graph({
 await graph.invoke("Find me something to report on");
 ```
 
-A standalone Agent (no Graph/Swarm) still needs `new Agent({ plugins: [trellarAgent] })`. Passing the plugin explicitly to a graph's Agents as well is harmless: registering twice is a no-op. Once bound, an Agent keeps the hook.
+A standalone Agent (no Graph/Swarm) still needs `new Agent({ plugins: [trellarAgent] })`. Passing the plugin to a graph's Agents as well is harmless.
 
-Call `evaluateConfidence()` from inside the run (a graph node or a tool), exactly as with LangChain. `ObservabilityMode` works the same way. See `orchestrations_examples/our_lab_with_aviran/car_stocks_buy_mcp_celery.py/ts/` for full examples.
+With `ObservabilityMode.ALWAYS` (as above) nothing else is needed. Without an `ObservabilityMode`, nothing is evaluated unless you call `evaluateConfidence()` from inside the run (a graph node or a tool), exactly as with LangChain. See `orchestrations_examples/our_lab_with_aviran/car_stocks_buy_mcp_celery.py/ts/` for full examples.
 
 > Strands graph nodes take their id from `agent.id`, which defaults to `"agent"` — give each agent in a graph a unique `id`.
 
 ### `trellarStrandsSingleCall`
 
-For one Agent called once (no Graph/Swarm). The run is over when the call returns, so use `ObservabilityMode.ALWAYS` (or `IF_NOT_EVALUATED`) and read the result off the Trellar agent:
+For one Agent called once (no Graph/Swarm). The run is over when the call returns, so a manual `evaluateConfidence()` isn't possible: the run is evaluated automatically (`ObservabilityMode.ALWAYS` is the default here; pass `ObservabilityMode.NONE` to only record). Read the result off the Trellar agent:
 
 ```ts
 import { Agent } from "@strands-agents/sdk";
-import { ObservabilityMode } from "trellar";
 import { trellarStrandsSingleCall } from "trellar/strands";
 
-const trellarAgent = trellarStrandsSingleCall("faq-agent", ObservabilityMode.ALWAYS);
+const trellarAgent = trellarStrandsSingleCall("faq-agent");
 const agent = new Agent({ name: "faq_agent", plugins: [trellarAgent] });
 await agent.invoke("What time does the office open?");
 
@@ -147,19 +147,13 @@ const result = trellarAgent.trellarEvaluateResult; // AgentLoopResult, or null
 const error = trellarAgent.trellarEvaluateError;   // the error, if the auto-triggered call failed
 ```
 
-Requests are marked `single_call: true` in the payload. Not covered: `agent.structuredOutput()` and calling a Strands `Model` directly — Strands fires no model-call hooks for them.
+Requests are marked `single_call: true` in the payload. Not covered: `agent.structuredOutput()` and calling a Strands `Model` directly.
 
 ---
 
-## Concurrency (the `ContextVar` equivalent)
+## Parallel runs
 
-Python resolves the active Trellar agent with a `ContextVar`. In Node the equivalent is `AsyncLocalStorage`, and `evaluateConfidence()` resolves the Trellar agent in this order:
-
-1. an explicit `runWithTrellarAgent(trellarAgent, fn)` scope (and the scopes trellar binds itself around every Strands tool call and graph node),
-2. the Trellar agent attached to the current LangChain run (read from the run's own callbacks, so concurrent `graph.invoke()` calls never see each other),
-3. the single run that is currently open in the process.
-
-So several runs can execute in parallel in the same process — each `evaluateConfidence()` call evaluates its own run:
+Several runs can execute in parallel in the same process. Give each its own Trellar agent, and each `evaluateConfidence()` call evaluates its own run:
 
 ```ts
 await Promise.all([
@@ -168,7 +162,7 @@ await Promise.all([
 ]);
 ```
 
-When you call `evaluateConfidence()` from code the framework does not scope for you (for example a callback you spawn yourself while several runs are open), wrap it:
+If you call `evaluateConfidence()` from code you started yourself (for example a background task spawned while several runs are open), wrap it so Trellar knows which run you mean:
 
 ```ts
 import { runWithTrellarAgent } from "trellar";
@@ -176,7 +170,7 @@ import { runWithTrellarAgent } from "trellar";
 await runWithTrellarAgent(trellarAgent, () => evaluateConfidence());
 ```
 
-As in Python, the Trellar agent is released as soon as the root run ends, so calling `evaluateConfidence()` after `invoke()` returns throws.
+Call `evaluateConfidence()` while the run is still in progress. Once the root `invoke()` returns, the run is closed and a later call throws.
 
 ---
 
@@ -290,13 +284,12 @@ trellarLangchainSingleCall(agentName: string, observabilityMode?: ObservabilityM
 
 Use this instead of `trellarLangchainAgent` when you are calling a chat model directly (`llm.invoke(...)`) with no wrapping LangGraph/chain. Agents built with `createAgent` are already compiled graphs under the hood, so they work with `trellarLangchainAgent` as usual.
 
-A bare `llm.invoke()` call has no node to call `evaluateConfidence()` from mid-run, and the Trellar agent is released as soon as the call finishes — so a manual call is never supported here. Use `ObservabilityMode.ALWAYS` (or `IF_NOT_EVALUATED`), then read the result back from the Trellar agent:
+A bare `llm.invoke()` call has no node to call `evaluateConfidence()` from mid-run, and the Trellar agent is released as soon as the call finishes — so a manual call is never supported here. The run is evaluated automatically (`ObservabilityMode.ALWAYS` is the default here; pass `ObservabilityMode.NONE` to only record). Read the result back from the Trellar agent:
 
 ```ts
-import { ObservabilityMode } from "trellar";
 import { trellarLangchainSingleCall } from "trellar/langchain";
 
-const trellarAgent = trellarLangchainSingleCall("single-llm-call", ObservabilityMode.ALWAYS);
+const trellarAgent = trellarLangchainSingleCall("single-llm-call");
 await llm.invoke(messages, { callbacks: [trellarAgent] });
 
 const result = trellarAgent.trellarEvaluateResult; // AgentLoopResult, or null if not yet evaluated
