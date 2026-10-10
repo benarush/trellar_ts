@@ -1,5 +1,5 @@
 /**
- * Strands Agents guard: turns Strands hook events into the same event payload
+ * Strands Agents callback: turns Strands hook events into the same event payload
  * the LangChain callback produces (chain / llm / tool events).
  *
  * Mapping:
@@ -32,13 +32,13 @@ import {
   type MultiAgentPlugin,
 } from "@strands-agents/sdk/multiagent";
 
-import { type AgentLoopResult, evaluateWithGuard, ObservabilityMode, parseObservabilityMode } from "../../agentLoop.js";
+import { type AgentLoopResult, evaluateWithTrellarAgent, ObservabilityMode, parseObservabilityMode } from "../../agentLoop.js";
 import {
-  activateGuard,
+  activateTrellarAgent,
   enterScope,
-  type GuardState,
+  type TrellarAgentState,
   currentScope,
-  releaseGuard,
+  releaseTrellarAgent,
   runInScope,
 } from "../../context.js";
 import { logger } from "../../logger.js";
@@ -74,12 +74,12 @@ function inputText(input: unknown): string {
 /**
  * Hook provider that records a Strands run for the Trellar backend.
  *
- * Not public API; use ``getStrandsGuard``. Register it as a plugin on every
- * Agent (``new Agent({ plugins: [guard] })``) and on the Graph/Swarm
- * (``new Graph({ ..., plugins: [guard] })``).
+ * Not public API; use ``trellarStrandsAgent``. Register it as a plugin on every
+ * Agent (``new Agent({ plugins: [trellarAgent] })``) and on the Graph/Swarm
+ * (``new Graph({ ..., plugins: [trellarAgent] })``).
  */
-export class StrandsGuardCallback implements Plugin, MultiAgentPlugin, GuardState {
-  readonly name = "trellar-strands-guard";
+export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAgentState {
+  readonly name = "trellar-strands-trellarAgent";
 
   readonly agentName: string;
   readonly observabilityMode: ObservabilityMode;
@@ -107,7 +107,7 @@ export class StrandsGuardCallback implements Plugin, MultiAgentPlugin, GuardStat
   _nodeRuns = new Map<string, string>();
   /** agent / nested orchestrator -> the node run it executes under */
   _executorParents = new Map<object, string>();
-  /** nodes whose ``stream`` was wrapped to run in this guard's scope */
+  /** nodes whose ``stream`` was wrapped to run in this Trellar agent's scope */
   _patchedNodes = new WeakSet<object>();
   /** root / agent chain events whose input text is only known after the hook fired */
   _pendingInputEvents = new Map<string, Obj>();
@@ -179,11 +179,11 @@ export class StrandsGuardCallback implements Plugin, MultiAgentPlugin, GuardStat
     const runId = randomUUID();
     let parent: string | null;
     if (this._rootRunId === null) {
-      // First run: this is the root. Reset state and become the active guard.
+      // First run: this is the root. Reset state and become the active Trellar agent.
       this._reset(runId);
       parent = null;
-      activateGuard(this);
-      enterScope({ guard: this });
+      activateTrellarAgent(this);
+      enterScope({ trellarAgent: this });
     } else {
       parent = explicitParent ?? currentScope()?.runId ?? this._rootRunId;
     }
@@ -217,7 +217,7 @@ export class StrandsGuardCallback implements Plugin, MultiAgentPlugin, GuardStat
   async _finishRoot(): Promise<void> {
     await this._maybeAutoEvaluate();
     // Release the slot so the next run starts clean; a new root re-resets state.
-    releaseGuard(this);
+    releaseTrellarAgent(this);
     this._rootRunId = null;
   }
 
@@ -226,7 +226,7 @@ export class StrandsGuardCallback implements Plugin, MultiAgentPlugin, GuardStat
     if (this.observabilityMode === ObservabilityMode.NONE) return;
     if (this.observabilityMode === ObservabilityMode.IF_NOT_EVALUATED && this._evaluated) return;
     try {
-      await evaluateWithGuard(this, { _observabilityCall: true });
+      await evaluateWithTrellarAgent(this, { _observabilityCall: true });
     } catch (error) {
       logger.warning("Auto-triggered evaluateConfidence() failed", error);
     }
@@ -236,7 +236,7 @@ export class StrandsGuardCallback implements Plugin, MultiAgentPlugin, GuardStat
   // Hook registration
   // ------------------------------------------------------------------
 
-  /** Strands ``Plugin`` entry point: called once per Agent the guard is attached to. */
+  /** Strands ``Plugin`` entry point: called once per Agent the Trellar agent is attached to. */
   initAgent(agent: LocalAgent): void {
     agent.addHook(BeforeInvocationEvent, (e) => this._onAgentStart(e));
     agent.addHook(MessageAddedEvent, (e) => this._onMessageAdded(e));
@@ -246,15 +246,15 @@ export class StrandsGuardCallback implements Plugin, MultiAgentPlugin, GuardStat
     agent.addHook(BeforeToolCallEvent, (e) => this._onToolStart(e));
     agent.addHook(AfterToolCallEvent, (e) => this._onToolEnd(e));
 
-    // Run every tool execution inside an async scope bound to this guard and
+    // Run every tool execution inside an async scope bound to this Trellar agent and
     // the tool's run id. Code called from a tool (``evaluateConfidence()``, or
-    // an agent used as a tool) then resolves the right guard / parent run even
+    // an agent used as a tool) then resolves the right Trellar agent / parent run even
     // when several runs are executing concurrently in the same process.
     // eslint-disable-next-line @typescript-eslint/no-this-alias
-    const guard = this;
+    const trellarAgent = this;
     if (typeof agent.addMiddleware === "function") {
       agent.addMiddleware(ExecuteToolStage, async function* (context, next) {
-        const scope = { guard, runId: guard._toolRuns.get(context.toolUse.toolUseId) };
+        const scope = { trellarAgent, runId: trellarAgent._toolRuns.get(context.toolUse.toolUseId) };
         const iterator = next(context);
         while (true) {
           const step = await runInScope(scope, () => iterator.next());
@@ -275,26 +275,26 @@ export class StrandsGuardCallback implements Plugin, MultiAgentPlugin, GuardStat
   }
 
   /**
-   * Run every node of ``orchestrator`` inside an async scope bound to this guard
+   * Run every node of ``orchestrator`` inside an async scope bound to this Trellar agent
    * and the node's run id. A hook cannot leak an ``AsyncLocalStorage`` value into
    * the node execution, so this is what lets ``evaluateConfidence()`` called from
-   * a custom node (or an agent's tool) find the right guard when several graphs
+   * a custom node (or an agent's tool) find the right Trellar agent when several graphs
    * run concurrently in one process.
    */
   _scopeNodes(orchestrator: Obj): void {
     const nodes = orchestrator["nodes"] as Map<string, Obj> | undefined;
     if (!nodes || typeof nodes.forEach !== "function") return;
     // eslint-disable-next-line @typescript-eslint/no-this-alias
-    const guard = this;
+    const trellarAgent = this;
     nodes.forEach((node, nodeId) => {
-      if (guard._patchedNodes.has(node) || typeof node["stream"] !== "function") return;
-      guard._patchedNodes.add(node);
+      if (trellarAgent._patchedNodes.has(node) || typeof node["stream"] !== "function") return;
+      trellarAgent._patchedNodes.add(node);
       const original = node["stream"].bind(node) as (...args: unknown[]) => AsyncGenerator<unknown, unknown, undefined>;
       node["stream"] = async function* (...args: unknown[]) {
         const generator = original(...args);
         const scope = () => ({
-          guard,
-          runId: guard._nodeRuns.get(`${orchestrator["id"]}\u0000${nodeId}`),
+          trellarAgent,
+          runId: trellarAgent._nodeRuns.get(`${orchestrator["id"]}\u0000${nodeId}`),
         });
         try {
           while (true) {
@@ -322,14 +322,14 @@ export class StrandsGuardCallback implements Plugin, MultiAgentPlugin, GuardStat
     const task = inputText(event["state"]?.["_pendingInput"]);
     // A nested orchestrator (a node of a bigger graph) hangs under that node's run.
     const explicitParent = this._executorParents.get(orchestrator);
-    this._multiRun = this._startChain(StrandsGuardCallback._multiName(orchestrator), [task], explicitParent);
+    this._multiRun = this._startChain(StrandsAgentCallback._multiName(orchestrator), [task], explicitParent);
   }
 
   async _onMultiEnd(event: Obj): Promise<void> {
     if (this._multiRun) {
       const runId = this._multiRun;
       this._multiRun = null;
-      this._endChain(runId, StrandsGuardCallback._multiName(event["orchestrator"]), {});
+      this._endChain(runId, StrandsAgentCallback._multiName(event["orchestrator"]), {});
       if (runId === this._rootRunId) await this._finishRoot();
     }
   }
@@ -528,14 +528,14 @@ export class StrandsGuardCallback implements Plugin, MultiAgentPlugin, GuardStat
 }
 
 /**
- * Guard for one Agent called once (no Graph/Swarm).
+ * Callback for one Agent called once (no Graph/Swarm).
  *
- * Not public API; use ``getStrandsSingleCallGuard``. The base guard already
+ * Not public API; use ``trellarStrandsSingleCall``. The base Trellar agent already
  * treats a bare Agent call as a root run, so this only adds the ``single_call``
  * payload flag and keeps the auto-evaluate outcome (the run is over by the time
  * the caller gets control, so it can't be fetched manually).
  */
-export class StrandsSingleCallGuardCallback extends StrandsGuardCallback {
+export class StrandsSingleCallCallback extends StrandsAgentCallback {
   override isSingleCall = true;
 
   /** Outcome of the auto-triggered evaluation; cleared on every new run. */
@@ -548,12 +548,12 @@ export class StrandsSingleCallGuardCallback extends StrandsGuardCallback {
     this.trellarEvaluateError = null;
   }
 
-  /** Like the base version, but stores the result/error on the guard. */
+  /** Like the base version, but stores the result/error on the trellarAgent. */
   override async _maybeAutoEvaluate(): Promise<void> {
     if (this.observabilityMode === ObservabilityMode.NONE) return;
     if (this.observabilityMode === ObservabilityMode.IF_NOT_EVALUATED && this._evaluated) return;
     try {
-      this.trellarEvaluateResult = await evaluateWithGuard(this, { _observabilityCall: true });
+      this.trellarEvaluateResult = await evaluateWithTrellarAgent(this, { _observabilityCall: true });
       this.trellarEvaluateError = null;
     } catch (error) {
       this.trellarEvaluateError = error;

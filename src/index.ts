@@ -6,4 +6,4 @@ export {
   type AgentLoopResult,
   type EvaluateConfidenceOptions,
 } from "./agentLoop.js";
-export { runWithGuard, type GuardState } from "./context.js";
+export { runWithTrellarAgent, runWithGuard, type TrellarAgentState, type GuardState } from "./context.js";

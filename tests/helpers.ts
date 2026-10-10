@@ -1,8 +1,8 @@
 /** Shared test helpers (counterpart of tests/conftest.py). */
 import { afterEach, beforeEach, vi } from "vitest";
 
-import { AgentGuardCallback } from "../src/callbacks/langchain/langchainCallback.js";
-import { activateGuard, releaseGuard } from "../src/context.js";
+import { LangchainAgentCallback } from "../src/callbacks/langchain/langchainCallback.js";
+import { activateTrellarAgent, releaseTrellarAgent } from "../src/context.js";
 import { assertValidAgentLoopRequest } from "./backendSchema.js";
 
 export const OK_BODY = {
@@ -48,16 +48,16 @@ export function useCleanEnv(): void {
   });
 }
 
-/** A guard activated with a fake trace id (counterpart of the ``active_handler`` fixture). */
-export function makeActiveHandler(name = "test-agent"): AgentGuardCallback {
-  const handler = new AgentGuardCallback({ agentName: name });
+/** A Trellar agent activated with a fake trace id (counterpart of the ``active_handler`` fixture). */
+export function makeActiveHandler(name = "test-agent"): LangchainAgentCallback {
+  const handler = new LangchainAgentCallback({ agentName: name });
   handler.traceId = "11111111-1111-4111-8111-111111111111";
-  activateGuard(handler);
+  activateTrellarAgent(handler);
   return handler;
 }
 
-export function deactivate(handler: AgentGuardCallback): void {
-  releaseGuard(handler);
+export function deactivate(handler: LangchainAgentCallback): void {
+  releaseTrellarAgent(handler);
 }
 
 export { assertValidAgentLoopRequest };

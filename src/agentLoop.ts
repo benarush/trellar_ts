@@ -1,4 +1,4 @@
-import { type GuardState, resolveActiveGuard } from "./context.js";
+import { type TrellarAgentState, resolveActiveTrellarAgent } from "./context.js";
 import * as settings from "./settings.js";
 
 /** Result of one ``evaluateConfidence()`` call. */
@@ -11,7 +11,7 @@ export interface AgentLoopResult {
 }
 
 /**
- * Controls whether the guard auto-triggers ``evaluateConfidence()`` when the
+ * Controls whether the Trellar agent auto-triggers ``evaluateConfidence()`` when the
  * graph's root run finishes (i.e. ``graph.invoke()`` is about to return).
  *
  * - ``ALWAYS``           -- always auto-call at the end of the run.
@@ -75,32 +75,32 @@ export interface EvaluateConfidenceOptions {
   /** HTTP request timeout in seconds (default 30). */
   timeout?: number;
   /**
-   * Internal -- set by the guard's auto-trigger (see ``ObservabilityMode``) to
+   * Internal -- set by the Trellar agent's auto-trigger (see ``ObservabilityMode``) to
    * mark the request as automatic rather than a manual call. Not for external use.
    */
   _observabilityCall?: boolean;
 }
 
 /**
- * Send ``guard``'s recorded run to the backend. Shared by the public
- * ``evaluateConfidence()`` and by the guards' auto-trigger, which already
- * holds the guard and must not depend on async-context lookup.
+ * Send ``trellarAgent``'s recorded run to the backend. Shared by the public
+ * ``evaluateConfidence()`` and by the Trellar agents' auto-trigger, which already
+ * holds the Trellar agent and must not depend on async-context lookup.
  *
  * @internal
  */
-export async function evaluateWithGuard(
-  guard: GuardState,
+export async function evaluateWithTrellarAgent(
+  trellarAgent: TrellarAgentState,
   options: EvaluateConfidenceOptions = {},
 ): Promise<AgentLoopResult> {
   const { apiKey, timeout = 30.0, _observabilityCall = false } = options;
 
-  if (!guard.traceId) {
+  if (!trellarAgent.traceId) {
     throw new Error(
-      "trace_id could not be resolved. Make sure getAgentGuard() is passed to " +
+      "trace_id could not be resolved. Make sure trellarLangchainAgent() is passed to " +
         "graph.invoke() before calling evaluateConfidence().",
     );
   }
-  const resolvedTraceId = String(guard.traceId);
+  const resolvedTraceId = String(trellarAgent.traceId);
 
   const baseUrl = settings.DEFAULT_ENDPOINT.replace(/\/+$/, "");
   const key = apiKey || settings.getEnvApiKey();
@@ -112,15 +112,15 @@ export async function evaluateWithGuard(
 
   const url = `${baseUrl}/agent-gateway/v1/agent-loop`;
   const payload = {
-    context: guard.events,
+    context: trellarAgent.events,
     trace_id: resolvedTraceId,
-    agent_name: guard.agentName,
+    agent_name: trellarAgent.agentName,
     observability_call: _observabilityCall,
-    single_call: guard.isSingleCall ?? false,
+    single_call: trellarAgent.isSingleCall ?? false,
     // One entry per distinct toolset bound during this run, keyed by a
     // content hash (not the model name) so the backend can correlate it
     // back to the exact SubAgent that declared it.
-    available_tools: Object.entries(guard.availableTools).map(([toolsHash, tools]) => ({
+    available_tools: Object.entries(trellarAgent.availableTools).map(([toolsHash, tools]) => ({
       tools_hash: toolsHash,
       tools,
     })),
@@ -158,7 +158,7 @@ export async function evaluateWithGuard(
     decisionIdentifier: data.decision_identifier,
     shouldStopNetwork: data.should_stop_network,
   });
-  guard._evaluated = true;
+  trellarAgent._evaluated = true;
 
   if (result.shouldStopNetwork && !_observabilityCall) {
     throw new NetworkHaltedError(result.explanation, result.score, result.decisionIdentifier);
@@ -171,22 +171,22 @@ export async function evaluateWithGuard(
  * Call the Trellar backend to get a confidence score.
  *
  * ``context``, ``trace_id``, and ``agent_name`` are all resolved automatically
- * from the active guard (``getAgentGuard`` / ``getStrandsGuard`` ...) -- no
+ * from the active Trellar agent (``trellarLangchainAgent`` / ``trellarStrandsAgent`` ...) -- no
  * manual wiring needed. Must be called from inside a graph node while the run
  * is still in progress, not after ``graph.invoke()`` returns.
  *
- * @throws Error when no active guard / trace id / api key can be resolved.
+ * @throws Error when no active Trellar agent / trace id / api key can be resolved.
  * @throws TrellarHTTPError on non-2xx responses.
  * @throws NetworkHaltedError when the backend signals that the agent network must stop.
  */
 export async function evaluateConfidence(options: EvaluateConfidenceOptions = {}): Promise<AgentLoopResult> {
-  const guard = resolveActiveGuard();
-  if (guard === undefined) {
+  const trellarAgent = resolveActiveTrellarAgent();
+  if (trellarAgent === undefined) {
     throw new Error(
-      "No active callback handler found. Use getAgentGuard() to create one " +
+      "No active callback handler found. Use trellarLangchainAgent() to create one " +
         "and pass it to graph.invoke() before calling evaluateConfidence(). " +
-        "If several runs execute concurrently, wrap the calling code in runWithGuard(guard, fn).",
+        "If several runs execute concurrently, wrap the calling code in runWithTrellarAgent(trellarAgent, fn).",
     );
   }
-  return evaluateWithGuard(guard, options);
+  return evaluateWithTrellarAgent(trellarAgent, options);
 }

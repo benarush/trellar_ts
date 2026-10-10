@@ -1,1 +1,1 @@
-export { StrandsGuardCallback, StrandsSingleCallGuardCallback } from "./strandsCallback.js";
+export { StrandsAgentCallback, StrandsSingleCallCallback } from "./strandsCallback.js";

@@ -6,8 +6,8 @@ import {
   ObservabilityMode,
   TrellarHTTPError,
 } from "../src/index.js";
-import { SingleCallGuardCallback } from "../src/callbacks/langchain/singleLangchainCallback.js";
-import { activateGuard, releaseGuard, runWithGuard } from "../src/context.js";
+import { LangchainSingleCallCallback } from "../src/callbacks/langchain/singleLangchainCallback.js";
+import { activateTrellarAgent, releaseTrellarAgent, runWithTrellarAgent } from "../src/context.js";
 import { assertValidAgentLoopRequest, deactivate, makeActiveHandler, mockFetch, OK_BODY, useCleanEnv } from "./helpers.js";
 
 useCleanEnv();
@@ -56,14 +56,14 @@ describe("evaluateConfidence request", () => {
     deactivate(h);
   });
 
-  it("marks single-call guards with single_call: true", async () => {
+  it("marks single-call Trellar agents with single_call: true", async () => {
     const calls = mockFetch();
-    const h = new SingleCallGuardCallback({ agentName: "single" });
+    const h = new LangchainSingleCallCallback({ agentName: "single" });
     h.traceId = "t";
-    activateGuard(h);
+    activateTrellarAgent(h);
     await evaluateConfidence();
     expect(calls[0]!.body.single_call).toBe(true);
-    releaseGuard(h);
+    releaseTrellarAgent(h);
   });
 
   it("sends available_tools as {tools_hash, tools} entries", async () => {
@@ -97,7 +97,7 @@ describe("evaluateConfidence request", () => {
 });
 
 describe("evaluateConfidence preconditions", () => {
-  it("throws when there is no active guard", async () => {
+  it("throws when there is no active Trellar agent", async () => {
     mockFetch();
     await expect(evaluateConfidence()).rejects.toThrow(/No active callback handler/);
   });
@@ -118,19 +118,19 @@ describe("evaluateConfidence preconditions", () => {
     deactivate(h);
   });
 
-  it("throws after the guard was released (called after the run ended)", async () => {
+  it("throws after the Trellar agent was released (called after the run ended)", async () => {
     mockFetch();
     const h = makeActiveHandler();
-    releaseGuard(h);
+    releaseTrellarAgent(h);
     await expect(evaluateConfidence()).rejects.toThrow(/No active callback handler/);
   });
 
-  it("two active guards are ambiguous unless runWithGuard disambiguates", async () => {
+  it("two active Trellar agents are ambiguous unless runWithTrellarAgent disambiguates", async () => {
     const calls = mockFetch();
     const a = makeActiveHandler("a");
     const b = makeActiveHandler("b");
     await expect(evaluateConfidence()).rejects.toThrow(/No active callback handler/);
-    await runWithGuard(b, () => evaluateConfidence());
+    await runWithTrellarAgent(b, () => evaluateConfidence());
     expect(calls[0]!.body.agent_name).toBe("b");
     deactivate(a);
     deactivate(b);
@@ -138,7 +138,7 @@ describe("evaluateConfidence preconditions", () => {
 });
 
 describe("evaluateConfidence result", () => {
-  it("returns a frozen AgentLoopResult and marks the guard evaluated", async () => {
+  it("returns a frozen AgentLoopResult and marks the Trellar agent evaluated", async () => {
     mockFetch();
     const h = makeActiveHandler();
     const result = await evaluateConfidence();
@@ -177,8 +177,8 @@ describe("evaluateConfidence result", () => {
   it("does not raise NetworkHaltedError for observability calls", async () => {
     mockFetch({ ...OK_BODY, should_stop_network: true });
     const h = makeActiveHandler();
-    const { evaluateWithGuard } = await import("../src/agentLoop.js");
-    const result = await evaluateWithGuard(h, { _observabilityCall: true });
+    const { evaluateWithTrellarAgent } = await import("../src/agentLoop.js");
+    const result = await evaluateWithTrellarAgent(h, { _observabilityCall: true });
     expect(result.shouldStopNetwork).toBe(true);
     deactivate(h);
   });
