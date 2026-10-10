@@ -109,6 +109,17 @@ describe("auto-evaluation", () => {
     expect((await run("if_not_evaluated", true)).evaluate).not.toHaveBeenCalled();
   });
 
+  it("the factory defaults to ALWAYS when no mode is passed", async () => {
+    // A bare call can't be evaluated manually, so no mode means evaluate.
+    const evaluate = vi.spyOn(agentLoop, "evaluateWithTrellarAgent").mockResolvedValue(OK);
+    const g = trellarLangchainSingleCall("single");
+    const id = uuid();
+    g.handleChatModelStart({ name: "X" }, [[new HumanMessage("hi")]], id, undefined);
+    await g.handleLLMEnd(makeLlmResult({ message: makeAiMessage("a") }), id, undefined);
+    expect(evaluate).toHaveBeenCalledTimes(1);
+    expect(g.trellarEvaluateResult).toEqual(OK);
+  });
+
   it("stores a failure as trellarEvaluateError and never throws", async () => {
     const boom = new Error("backend down");
     vi.spyOn(agentLoop, "evaluateWithTrellarAgent").mockRejectedValue(boom);

@@ -52,7 +52,8 @@ let agentCounter = 0;
 function makeAgent(
   trellarAgent: StrandsAgentCallback,
   turns: Turn[],
-  options: { name?: string; tools?: any[]; systemPrompt?: string } = {},
+  // bind: false builds an Agent without the plugin (the Graph must bind it)
+  options: { name?: string; tools?: any[]; systemPrompt?: string; bind?: boolean } = {},
 ): Agent {
   const name = options.name ?? "calc";
   agentCounter += 1;
@@ -61,7 +62,7 @@ function makeAgent(
     name,
     model: new FakeModel(turns),
     tools: options.tools ?? [],
-    plugins: [trellarAgent],
+    plugins: options.bind === false ? [] : [trellarAgent],
     systemPrompt: options.systemPrompt ?? "You are a calculator.",
     printer: false,
   });
@@ -380,6 +381,79 @@ describe("graph", () => {
   });
 });
 
+describe("auto-bind from the Graph", () => {
+  const graphOf = (trellarAgent: StrandsAgentCallback, ...agents: Agent[]) =>
+    new Graph({
+      nodes: agents,
+      edges: agents.slice(1).map((a, i) => [agents[i]!.id, a.id] as [string, string]),
+      plugins: [trellarAgent],
+    });
+  /** Number of recorded events per event type (duplicates would inflate these). */
+  const counts = (trellarAgent: StrandsAgentCallback) => {
+    const out: Record<string, number> = {};
+    for (const e of trellarAgent.events) out[e["event"] as string] = (out[e["event"] as string] ?? 0) + 1;
+    return out;
+  };
+
+  it("the Graph plugin alone records agent llm events", async () => {
+    const trellarAgent = trellarStrandsAgent("t");
+    const bare = (name: string) => makeAgent(trellarAgent, [text("ok")], { name, bind: false });
+    await graphOf(trellarAgent, bare("a1"), bare("a2")).invoke("go");
+
+    expect(counts(trellarAgent)["on_chat_model_start"]).toBe(2); // one per agent
+    assertBackendAccepts(trellarAgent);
+  });
+
+  it("explicit plugin plus Graph plugin records once and does not throw", async () => {
+    const explicit = trellarStrandsAgent("t");
+    const auto = trellarStrandsAgent("t");
+    await graphOf(
+      explicit,
+      makeAgent(explicit, [text("ok")], { name: "a1" }),
+      makeAgent(explicit, [text("ok")], { name: "a2" }),
+    ).invoke("go");
+    await graphOf(
+      auto,
+      makeAgent(auto, [text("ok")], { name: "a1", bind: false }),
+      makeAgent(auto, [text("ok")], { name: "a2", bind: false }),
+    ).invoke("go");
+
+    expect(counts(explicit)).toEqual(counts(auto)); // nothing recorded twice
+  });
+
+  it("running the graph twice does not duplicate events", async () => {
+    const trellarAgent = trellarStrandsAgent("t");
+    const graph = graphOf(
+      trellarAgent,
+      makeAgent(trellarAgent, [text("ok")], { name: "a1", bind: false }),
+      makeAgent(trellarAgent, [text("ok")], { name: "a2", bind: false }),
+    );
+    await graph.invoke("go");
+    const firstCounts = counts(trellarAgent);
+    const firstTrace = trellarAgent.traceId;
+    await graph.invoke("again");
+
+    expect(counts(trellarAgent)).toEqual(firstCounts);
+    expect(trellarAgent.traceId).not.toBe(firstTrace);
+  });
+
+  it("an Agent used by two graphs records once per run", async () => {
+    const trellarAgent = trellarStrandsAgent("t");
+    const shared = makeAgent(trellarAgent, [text("ok")], { name: "shared", bind: false });
+    await graphOf(trellarAgent, shared).invoke("go");
+    await graphOf(trellarAgent, shared).invoke("again"); // second graph binds the same Agent again
+
+    expect(counts(trellarAgent)["on_chat_model_start"]).toBe(1); // this run only, not doubled
+  });
+
+  it("a non-Agent node is skipped without error", async () => {
+    const trellarAgent = trellarStrandsAgent("t");
+    await new Graph({ nodes: [new FunctionNode("gate", () => {})], edges: [], plugins: [trellarAgent] }).invoke("go");
+
+    expect(eventsOf(trellarAgent, "on_chain_start").map((e) => e.node_name)).toContain("gate");
+  });
+});
+
 describe("conditional routing", () => {
   const routeJira = tool({ name: "route_to_jira_agent", description: "r", inputSchema: z.object({}), callback: () => "route:jira" });
   const routeEmail = tool({ name: "route_to_send_email_agent", description: "r", inputSchema: z.object({}), callback: () => "route:send_email" });
@@ -554,9 +628,18 @@ describe("single call", () => {
     expect(trellarAgent.trellarEvaluateResult).toBeNull();
   });
 
-  it("NONE mode does not evaluate", async () => {
+  it("defaults to ALWAYS: evaluates without a mode argument", async () => {
+    // A single call can't be evaluated manually, so no mode means evaluate.
     const calls = mockFetch();
     const trellarAgent = trellarStrandsSingleCall("t");
+    await makeAgent(trellarAgent, [text("hi")]).invoke("go");
+    expect(calls).toHaveLength(1);
+    expect(trellarAgent.trellarEvaluateResult?.score).toBe(8);
+  });
+
+  it("NONE mode does not evaluate", async () => {
+    const calls = mockFetch();
+    const trellarAgent = trellarStrandsSingleCall("t", ObservabilityMode.NONE);
     await makeAgent(trellarAgent, [text("hi")]).invoke("go");
     expect(calls).toHaveLength(0);
     expect(trellarAgent.trellarEvaluateResult).toBeNull();

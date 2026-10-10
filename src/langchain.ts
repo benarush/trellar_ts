@@ -67,19 +67,19 @@ export function trellarLangchainAgent(
  *
  * A bare ``llm.invoke()`` call has no node to call ``evaluateConfidence()``
  * from mid-run, and the Trellar agent is released as soon as the call finishes -- so a
- * manual call is never supported here. Use ``ObservabilityMode.ALWAYS`` (or
- * ``IF_NOT_EVALUATED``) to auto-trigger the evaluation, then read the result
- * off the Trellar agent:
+ * manual call is never supported here. The evaluation is therefore triggered
+ * automatically (``ObservabilityMode.ALWAYS`` is the default here, pass ``NONE``
+ * to only record). Read the result off the Trellar agent:
  *
  * ```ts
- * const trellarAgent = trellarLangchainSingleCall("single-llm-call", ObservabilityMode.ALWAYS);
+ * const trellarAgent = trellarLangchainSingleCall("single-llm-call");
  * await llm.invoke(messages, { callbacks: [trellarAgent] });
  * const result = trellarAgent.trellarEvaluateResult;
  * ```
  */
 export function trellarLangchainSingleCall(
   agentName: string,
-  observabilityMode: ObservabilityMode = ObservabilityMode.NONE,
+  observabilityMode: ObservabilityMode = ObservabilityMode.ALWAYS,
 ): LangchainSingleCallCallback {
   return new LangchainSingleCallCallback({ agentName, observabilityMode });
 }

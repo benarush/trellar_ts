@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Strands: registering the Trellar agent on the Graph/Swarm now binds every node's
+  Agent automatically, so `plugins: [trellarAgent]` on each Agent is no longer needed
+  (still harmless, and still required for a standalone Agent). Registration is
+  idempotent: nothing is recorded twice.
+
 ### Changed
+- `trellarStrandsSingleCall` and `trellarLangchainSingleCall` now default to `ObservabilityMode.ALWAYS` (was `NONE`): a single call cannot be evaluated manually, so with no mode it used to evaluate nothing. Pass `ObservabilityMode.NONE` to keep the old behavior.
 - The public factory functions are renamed to product-friendly names (matching
   the Python package):
   `getAgentGuard` -> `trellarLangchainAgent`,
