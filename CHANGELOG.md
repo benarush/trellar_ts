@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-10
+
 ### Added
 - Strands: registering the Trellar agent on the Graph/Swarm now binds every node's
   Agent automatically, so `plugins: [trellarAgent]` on each Agent is no longer needed
@@ -53,5 +55,6 @@ callbacks, same events and text formats, and the same payload sent to
 - ESM + CommonJS builds with type declarations; Node.js 20, 22, 24 and 26
   (Strands: Node.js 22+).
 
-[Unreleased]: https://github.com/benarush/trellar_ts/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/benarush/trellar_ts/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/benarush/trellar_ts/releases/tag/v0.7.0
 [0.6.1]: https://github.com/benarush/trellar_ts/releases/tag/v0.6.1
