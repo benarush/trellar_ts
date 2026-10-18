@@ -220,6 +220,31 @@ describe("single agent", () => {
   });
 });
 
+describe("hook safety", () => {
+  // Strands does not catch hook exceptions: a Trellar bug must never fail the client's run.
+  const breakRecording = (trellarAgent: StrandsAgentCallback) => {
+    vi.spyOn(trellarAgent, "_record").mockImplementation(() => {
+      throw new Error("trellar bug");
+    });
+    return vi.spyOn(console, "warn").mockImplementation(() => {});
+  };
+
+  it("a single agent run still completes when recording throws", async () => {
+    const trellarAgent = trellarStrandsAgent("t");
+    const warn = breakRecording(trellarAgent);
+    const agent = makeAgent(trellarAgent, [toolTurn("add", { a: 1, b: 2 }), text("3")], { tools: [add] });
+    await expect(agent.invoke("1+2?")).resolves.toBeDefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Trellar hook"), expect.any(Error));
+  });
+
+  it("a graph run still completes when recording throws", async () => {
+    const trellarAgent = trellarStrandsAgent("t");
+    const warn = breakRecording(trellarAgent);
+    await expect(buildGraph(trellarAgent, () => {}).invoke("go")).resolves.toBeDefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Trellar hook"), expect.any(Error));
+  });
+});
+
 describe("llmHumanInput", () => {
   const msg = (role: string, ...content: any[]) => ({ role, content });
 

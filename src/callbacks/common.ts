@@ -2,7 +2,25 @@
 import { createHash } from "node:crypto";
 import { inspect } from "node:util";
 
+import { logger } from "../logger.js";
+
 export type JsonObject = Record<string, unknown>;
+
+/**
+ * Wrap a framework hook so it can never throw into the host application.
+ *
+ * Telemetry must not break the client's agent: an error is logged and swallowed.
+ * Always async, which covers both sync and async handlers (frameworks await hooks).
+ */
+export function guardedHook<E>(name: string, fn: (event: E) => void | Promise<void>): (event: E) => Promise<void> {
+  return async (event: E) => {
+    try {
+      await fn(event);
+    } catch (error) {
+      logger.warning(`Trellar hook ${name} failed`, error);
+    }
+  };
+}
 
 interface PyDumpOptions {
   sortKeys: boolean;
