@@ -1,6 +1,6 @@
 {
   "name": "trellar",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Client library for the Trellar confidence evaluation API",
   "keywords": [
     "agent",
