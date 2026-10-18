@@ -42,7 +42,7 @@ import {
   runInScope,
 } from "../../context.js";
 import { logger } from "../../logger.js";
-import { buildContext, compactJson, hashTools, toJsonable } from "../common.js";
+import { buildContext, compactJson, guardedHook, hashTools, toJsonable } from "../common.js";
 import {
   isMcpTool,
   lastAssistantText,
@@ -240,19 +240,24 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
   // Hook registration
   // ------------------------------------------------------------------
 
+  /** Strands does not catch hook exceptions, so every hook is registered through this guard. */
+  _guard<E>(handler: (event: E) => void | Promise<void>): (event: E) => Promise<void> {
+    return guardedHook(handler.name, (event) => handler.call(this, event));
+  }
+
   /** Strands ``Plugin`` entry point: called once per Agent the Trellar agent is attached to. */
   initAgent(agent: LocalAgent): void {
     // Idempotent: an explicit ``plugins: [...]`` plus auto-binding from the Graph must not
     // register twice, or every event would be recorded twice.
     if (this._boundAgents.has(agent)) return;
     this._boundAgents.add(agent);
-    agent.addHook(BeforeInvocationEvent, (e) => this._onAgentStart(e));
-    agent.addHook(MessageAddedEvent, (e) => this._onMessageAdded(e));
-    agent.addHook(AfterInvocationEvent, (e) => this._onAgentEnd(e));
-    agent.addHook(BeforeModelCallEvent, (e) => this._onModelStart(e));
-    agent.addHook(AfterModelCallEvent, (e) => this._onModelEnd(e));
-    agent.addHook(BeforeToolCallEvent, (e) => this._onToolStart(e));
-    agent.addHook(AfterToolCallEvent, (e) => this._onToolEnd(e));
+    agent.addHook(BeforeInvocationEvent, this._guard(this._onAgentStart));
+    agent.addHook(MessageAddedEvent, this._guard(this._onMessageAdded));
+    agent.addHook(AfterInvocationEvent, this._guard(this._onAgentEnd));
+    agent.addHook(BeforeModelCallEvent, this._guard(this._onModelStart));
+    agent.addHook(AfterModelCallEvent, this._guard(this._onModelEnd));
+    agent.addHook(BeforeToolCallEvent, this._guard(this._onToolStart));
+    agent.addHook(AfterToolCallEvent, this._guard(this._onToolEnd));
 
     // Run every tool execution inside an async scope bound to this Trellar agent and
     // the tool's run id. Code called from a tool (``evaluateConfidence()``, or
@@ -278,10 +283,10 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     if (this._boundOrchestrators.has(orchestrator)) return;
     this._boundOrchestrators.add(orchestrator);
     this._scopeNodes(orchestrator as unknown as Obj);
-    orchestrator.addHook(BeforeMultiAgentInvocationEvent, (e) => this._onMultiStart(e));
-    orchestrator.addHook(AfterMultiAgentInvocationEvent, (e) => this._onMultiEnd(e));
-    orchestrator.addHook(BeforeNodeCallEvent, (e) => this._onNodeStart(e));
-    orchestrator.addHook(AfterNodeCallEvent, (e) => this._onNodeEnd(e));
+    orchestrator.addHook(BeforeMultiAgentInvocationEvent, this._guard(this._onMultiStart));
+    orchestrator.addHook(AfterMultiAgentInvocationEvent, this._guard(this._onMultiEnd));
+    orchestrator.addHook(BeforeNodeCallEvent, this._guard(this._onNodeStart));
+    orchestrator.addHook(AfterNodeCallEvent, this._guard(this._onNodeEnd));
   }
 
   /**
