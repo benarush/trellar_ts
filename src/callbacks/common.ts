@@ -6,6 +6,19 @@ import { logger } from "../logger.js";
 
 export type JsonObject = Record<string, unknown>;
 
+/** Record a monotonic start time for *runId* (used for ``duration_seconds``). */
+export function markStart(starts: Map<string, number>, runId: string): void {
+  starts.set(runId, performance.now());
+}
+
+/** Seconds (3 decimals) since ``markStart``; deletes the entry. ``null`` if no start was recorded. */
+export function popElapsed(starts: Map<string, number>, runId: string): number | null {
+  const t = starts.get(runId);
+  if (t === undefined) return null;
+  starts.delete(runId);
+  return Math.round(performance.now() - t) / 1000;
+}
+
 /**
  * Wrap a framework hook so it can never throw into the host application.
  *
@@ -230,6 +243,7 @@ export function buildContext(events: JsonObject[], traceId: unknown): string {
       const usage = event["token_usage"];
       lines.push(`  response: ${pyStr(orDefault(out["response"], ""))}`);
       if (truthy(usage)) lines.push(`  token_usage: ${compactJson(usage)}`);
+      if (typeof event["duration_seconds"] === "number") lines.push(`  duration: ${event["duration_seconds"]}s`);
     } else if (eventName === "on_tool_start") {
       lines.push(`  tool: ${pyStr(orDefault(event["tool"], ""))}`);
       lines.push(`  input: ${compactJson(orDefault(event["input"], {}))}`);
@@ -237,6 +251,7 @@ export function buildContext(events: JsonObject[], traceId: unknown): string {
       // MCP provenance is signal for the confidence evaluator, not noise.
       const viaMcp = truthy(event["is_mcp_tool"]) ? " (via MCP)" : "";
       lines.push(`  output${viaMcp}: ${compactJson(orDefault(event["output"], ""))}`);
+      if (typeof event["duration_seconds"] === "number") lines.push(`  duration: ${event["duration_seconds"]}s`);
     } else if (eventName === "on_chain_start") {
       lines.push(`  inputs: ${compactJson(orDefault(event["inputs"], {}))}`);
     } else if (eventName === "on_chain_end") {

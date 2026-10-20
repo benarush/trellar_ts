@@ -1,0 +1,122 @@
+/**
+ * Tests for ``duration_seconds`` on model/tool end events (LangChain + Strands).
+ * LangChain tests drive the callback directly with a fake clock so durations are
+ * exact; the Strands test runs a real Agent with a scripted model.
+ */
+import { HumanMessage } from "@langchain/core/messages";
+import { Agent, tool } from "@strands-agents/sdk";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+
+import { LangchainAgentCallback } from "../src/callbacks/langchain/langchainCallback.js";
+import { trellarStrandsAgent } from "../src/strands.js";
+import { makeAiMessage, makeLlmResult, uuid } from "./factories.js";
+import { FakeModel } from "./strandsFactories.js";
+
+let now = 0;
+beforeEach(() => {
+  now = 1000;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+});
+afterEach(() => vi.restoreAllMocks());
+
+const advance = (seconds: number): void => {
+  now += seconds * 1000;
+};
+const find = (h: { events: Array<Record<string, unknown>> }, event: string, runId: string) =>
+  h.events.find((e) => e["event"] === event && e["run_id"] === runId)!;
+
+/** A handler with a started root chain, so per-run state is initialised. */
+function makeHandler(): LangchainAgentCallback {
+  const h = new LangchainAgentCallback({ agentName: "test-agent" });
+  h.handleChainStart({ name: "graph" }, { messages: [] }, uuid(), undefined, [], {}, undefined, "graph");
+  return h;
+}
+const startModel = (h: LangchainAgentCallback, id: string) =>
+  h.handleChatModelStart({ name: "gpt" }, [[new HumanMessage("hi")]], id, undefined);
+const startTool = (h: LangchainAgentCallback, id: string) =>
+  h.handleToolStart({ name: "search" }, "{}", id, undefined, [], {}, "search");
+
+describe("duration_seconds", () => {
+  it("langchain: tool duration", () => {
+    const h = makeHandler();
+    const id = uuid();
+    startTool(h, id);
+    advance(2.5);
+    h.handleToolEnd("result", id, undefined);
+
+    expect(find(h, "on_tool_start", id)).not.toHaveProperty("duration_seconds");
+    expect(find(h, "on_tool_end", id)["duration_seconds"]).toBe(2.5);
+    expect(h._startTimes.size).toBe(0);
+    expect(h.buildContext()).toContain("duration: 2.5s");
+  });
+
+  it("langchain: model duration on success and error", () => {
+    const h = makeHandler();
+    const okId = uuid();
+    const errId = uuid();
+
+    startModel(h, okId);
+    advance(1.25);
+    h.handleLLMEnd(makeLlmResult({ message: makeAiMessage("hello") }), okId, undefined);
+
+    startModel(h, errId);
+    advance(0.5);
+    h.handleLLMError(new Error("boom"), errId, undefined);
+
+    expect(find(h, "on_llm_end", okId)["duration_seconds"]).toBe(1.25);
+    expect(find(h, "on_llm_error", errId)["duration_seconds"]).toBe(0.5);
+  });
+
+  it("langchain: overlapping calls get independent durations", () => {
+    const h = makeHandler();
+    const toolA = uuid();
+    const toolB = uuid();
+    const model = uuid();
+
+    startTool(h, toolA);
+    advance(1);
+    startTool(h, toolB); // same tool, starts while A is still running
+    startModel(h, model);
+    advance(2);
+    h.handleToolEnd("b", toolB, undefined); // B: 2s
+    advance(3);
+    h.handleLLMEnd(makeLlmResult({ message: makeAiMessage("ok") }), model, undefined); // model: 5s
+    advance(4);
+    h.handleToolEnd("a", toolA, undefined); // A: 10s
+
+    expect(find(h, "on_tool_end", toolB)["duration_seconds"]).toBe(2);
+    expect(find(h, "on_llm_end", model)["duration_seconds"]).toBe(5);
+    expect(find(h, "on_tool_end", toolA)["duration_seconds"]).toBe(10);
+    expect(h._startTimes.size).toBe(0);
+  });
+
+  it("strands: model and tool durations", async () => {
+    const add = tool({
+      name: "add",
+      description: "Add two numbers.",
+      inputSchema: z.object({ a: z.number(), b: z.number() }),
+      callback: ({ a, b }) => a + b,
+    });
+    const trellarAgent = trellarStrandsAgent("t");
+    const agent = new Agent({
+      id: "calc-durations",
+      name: "calc",
+      model: new FakeModel([{ toolUse: { name: "add", input: { a: 1, b: 2 } } }, { text: "3" }]),
+      tools: [add],
+      plugins: [trellarAgent],
+      printer: false,
+    });
+    await agent.invoke("1+2?");
+
+    const of = (kind: string) => trellarAgent.events.filter((e) => e["event"] === kind);
+    for (const kind of ["on_llm_end", "on_tool_end"]) {
+      expect(of(kind).length).toBeGreaterThan(0);
+      for (const e of of(kind)) expect(e["duration_seconds"]).toBeGreaterThanOrEqual(0);
+    }
+    for (const kind of ["on_chat_model_start", "on_tool_start"]) {
+      for (const e of of(kind)) expect(e).not.toHaveProperty("duration_seconds");
+    }
+    expect(trellarAgent._startTimes.size).toBe(0);
+  });
+});

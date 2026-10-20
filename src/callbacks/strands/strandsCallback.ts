@@ -42,7 +42,7 @@ import {
   runInScope,
 } from "../../context.js";
 import { logger } from "../../logger.js";
-import { buildContext, compactJson, guardedHook, hashTools, toJsonable } from "../common.js";
+import { buildContext, compactJson, guardedHook, hashTools, markStart, popElapsed, toJsonable } from "../common.js";
 import {
   isMcpTool,
   lastAssistantText,
@@ -94,6 +94,8 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
   _rootRunId: string | null = null;
   /** chain/tool run_id -> parent run_id */
   _parents = new Map<string, string | null>();
+  /** model/tool run_id -> performance.now() at start, for ``duration_seconds`` */
+  _startTimes = new Map<string, number>();
   /** agent -> open invocation run_id */
   _agentRuns = new Map<object, string>();
   /** agent -> open model-call run_id */
@@ -142,6 +144,7 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     this._evaluated = false;
     this._rootRunId = rootRunId;
     this._parents = new Map();
+    this._startTimes = new Map();
     this._agentRuns = new Map();
     this._modelRuns = new Map();
     this._toolRuns = new Map();
@@ -441,6 +444,7 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     const model = modelName(agent);
     const parent = this._agentRuns.get(agent) ?? this._rootRunId;
     this._parents.set(runId, parent);
+    markStart(this._startTimes, runId);
     this._record("on_chat_model_start", runId, parent, model, "llm", {
       model,
       input: { system: systemPromptText(agent), human: llmHumanInput(agent["messages"]) },
@@ -455,11 +459,13 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     this._modelRuns.delete(agent);
     const parent = this._parents.get(runId) ?? null;
     const model = modelName(agent);
+    const duration = popElapsed(this._startTimes, runId);
 
     const stopData = event["stopData"] as Obj | undefined;
     if (event["error"] !== undefined || stopData === undefined) {
       this._record("on_llm_error", runId, parent, model, "llm", {
         error: event["error"] !== undefined ? errorText(event["error"]) : "None",
+        duration_seconds: duration,
       });
       return;
     }
@@ -479,6 +485,7 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     const record = this._record("on_llm_end", runId, parent, model, "llm", {
       output: { response: parts.join("\n") },
       token_usage: null,
+      duration_seconds: duration,
     });
     for (const tu of toolUses) this._toolLlmEvent.set(tu["toolUseId"], record);
   }
@@ -494,6 +501,7 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     const parent = this._agentRuns.get(agent) ?? this._rootRunId;
     this._toolRuns.set(toolUse["toolUseId"], runId);
     this._parents.set(runId, parent);
+    markStart(this._startTimes, runId);
 
     const toolInput = toolUse["input"];
     const tool = (event["selectedTool"] ?? event["tool"]) as Obj | undefined;
@@ -514,9 +522,13 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     this._toolRuns.delete(toolUseId);
     const parent = this._parents.get(runId) ?? null;
     const name = toolUse["name"] as string;
+    const duration = popElapsed(this._startTimes, runId);
 
     if (event["error"] !== undefined) {
-      this._record("on_tool_error", runId, parent, name, "tool", { error: errorText(event["error"]) });
+      this._record("on_tool_error", runId, parent, name, "tool", {
+        error: errorText(event["error"]),
+        duration_seconds: duration,
+      });
       return;
     }
 
@@ -524,6 +536,7 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     this._record("on_tool_end", runId, parent, name, "tool", {
       output,
       is_mcp_tool: isMcpTool(event["selectedTool"] ?? event["tool"]),
+      duration_seconds: duration,
     });
 
     // Attach the tool's output to the LLM event that requested it.

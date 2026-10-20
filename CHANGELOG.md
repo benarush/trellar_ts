@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `duration_seconds` on model and tool end/error events (`on_llm_end`, `on_llm_error`,
+  `on_tool_end`, `on_tool_error`) for both LangChain and Strands: how long the call took,
+  in seconds. Also shown as a `duration:` line in the text context.
+
 ## [0.7.1] - 2026-10-18
 
 ### Fixed
