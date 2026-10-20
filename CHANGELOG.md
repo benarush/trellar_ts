@@ -8,9 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `input_tokens` and `output_tokens` on `on_llm_end` events for both LangChain and Strands
+  (`null` when the provider reports no usage). The existing `token_usage` field is
+  unchanged.
 - `duration_seconds` on model and tool end/error events (`on_llm_end`, `on_llm_error`,
   `on_tool_end`, `on_tool_error`) for both LangChain and Strands: how long the call took,
-  in seconds. Also shown as a `duration:` line in the text context.
+  in seconds.
 
 ## [0.7.1] - 2026-10-18
 

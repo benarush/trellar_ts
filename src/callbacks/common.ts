@@ -243,7 +243,6 @@ export function buildContext(events: JsonObject[], traceId: unknown): string {
       const usage = event["token_usage"];
       lines.push(`  response: ${pyStr(orDefault(out["response"], ""))}`);
       if (truthy(usage)) lines.push(`  token_usage: ${compactJson(usage)}`);
-      if (typeof event["duration_seconds"] === "number") lines.push(`  duration: ${event["duration_seconds"]}s`);
     } else if (eventName === "on_tool_start") {
       lines.push(`  tool: ${pyStr(orDefault(event["tool"], ""))}`);
       lines.push(`  input: ${compactJson(orDefault(event["input"], {}))}`);
@@ -251,7 +250,6 @@ export function buildContext(events: JsonObject[], traceId: unknown): string {
       // MCP provenance is signal for the confidence evaluator, not noise.
       const viaMcp = truthy(event["is_mcp_tool"]) ? " (via MCP)" : "";
       lines.push(`  output${viaMcp}: ${compactJson(orDefault(event["output"], ""))}`);
-      if (typeof event["duration_seconds"] === "number") lines.push(`  duration: ${event["duration_seconds"]}s`);
     } else if (eventName === "on_chain_start") {
       lines.push(`  inputs: ${compactJson(orDefault(event["inputs"], {}))}`);
     } else if (eventName === "on_chain_end") {

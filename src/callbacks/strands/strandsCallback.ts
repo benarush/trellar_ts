@@ -482,9 +482,14 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
       parts.push(`TOOL CALL: ${tu["name"]}(args=${compactJson(tu["input"])})`);
     }
 
+    // Strands attaches the call's usage to the message before firing this hook.
+    const usage = stopData["message"]?.["metadata"]?.["usage"] as Obj | undefined;
+
     const record = this._record("on_llm_end", runId, parent, model, "llm", {
       output: { response: parts.join("\n") },
       token_usage: null,
+      input_tokens: usage?.["inputTokens"] ?? null,
+      output_tokens: usage?.["outputTokens"] ?? null,
       duration_seconds: duration,
     });
     for (const tu of toolUses) this._toolLlmEvent.set(tu["toolUseId"], record);

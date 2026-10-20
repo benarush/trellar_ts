@@ -48,7 +48,6 @@ describe("duration_seconds", () => {
     expect(find(h, "on_tool_start", id)).not.toHaveProperty("duration_seconds");
     expect(find(h, "on_tool_end", id)["duration_seconds"]).toBe(2.5);
     expect(h._startTimes.size).toBe(0);
-    expect(h.buildContext()).toContain("duration: 2.5s");
   });
 
   it("langchain: model duration on success and error", () => {

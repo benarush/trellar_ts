@@ -14,6 +14,7 @@ import {
   contentToStr,
   extractLlmInput,
   extractModelName,
+  extractTokenCounts,
   findToolDescription,
   isMessageLike,
   normalizeTools,
@@ -65,6 +66,8 @@ function lastOf(id: unknown): string | undefined {
  * - ``node_type``     -- ``"llm"``, ``"tool"``, or ``"chain"``
  * - extra payload fields depending on the event type, notably ``is_mcp_tool``
  *   (boolean) on ``on_tool_end`` events -- see ``isMcpToolRun``.
+ * - ``input_tokens`` / ``output_tokens`` -- tokens the model call used (``null`` if the
+ *   provider reported none), on ``on_llm_end`` events.
  * - ``duration_seconds`` -- seconds the model/tool call took, on the ``*_end`` / ``*_error``
  *   events of LLM and tool runs.
  */
@@ -330,6 +333,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     //   - Gemini multimodal content (list of parts -- serialise to JSON)
     let responseText = "";
     let toolCalls: any[] = [];
+    let usageMetadata: unknown;
     const generations = response?.["generations"];
     if (Array.isArray(generations) && generations.length > 0) {
       const firstBatch = generations[0];
@@ -340,6 +344,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
         let message = gen?.["message"] as Obj | null | undefined;
         if (message !== null && message !== undefined) {
           toolCalls = (message["tool_calls"] as any[] | undefined) || [];
+          usageMetadata = message["usage_metadata"];
           const content = message["content"];
           if (content !== null && content !== undefined) {
             responseText = contentToStr(content);
@@ -364,6 +369,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     const tokenUsage = truthy(llmOutput["token_usage"] ?? llmOutput["tokenUsage"])
       ? (llmOutput["token_usage"] ?? llmOutput["tokenUsage"])
       : (llmOutput["usage"] ?? null);
+    const { input: inputTokens, output: outputTokens } = extractTokenCounts(usageMetadata, llmOutput);
 
     // Fold tool calls into the response text so the payload keeps its original
     // shape ({"response": <str>}). The matching tool results are appended
@@ -381,6 +387,8 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     this._record("on_llm_end", runId, parentRunId, {
       output: { response: responseText },
       token_usage: tokenUsage,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
       duration_seconds: popElapsed(this._startTimes, runId),
     });
 

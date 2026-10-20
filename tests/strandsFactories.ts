@@ -28,6 +28,8 @@ export class FakeModel extends Model {
     this.calls += 1;
     if ("error" in turn) throw new Error(turn.error);
     yield { type: "modelMessageStartEvent", role: "assistant" };
+    // Reported once per call; the SDK attaches it to the response message.
+    yield { type: "modelMetadataEvent", usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 } };
     if ("text" in turn) {
       yield { type: "modelContentBlockStartEvent" };
       yield { type: "modelContentBlockDeltaEvent", delta: { type: "textDelta", text: turn.text } };
