@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { LangchainAgentCallback } from "../src/callbacks/langchain/langchainCallback.js";
+import { LangchainSingleCallCallback } from "../src/callbacks/langchain/singleLangchainCallback.js";
 import { trellarStrandsAgent } from "../src/strands.js";
 import { makeAiMessage, makeLlmResult, uuid } from "./factories.js";
 import { FakeModel } from "./strandsFactories.js";
@@ -47,7 +48,7 @@ describe("duration_seconds", () => {
 
     expect(find(h, "on_tool_start", id)).not.toHaveProperty("duration_seconds");
     expect(find(h, "on_tool_end", id)["duration_seconds"]).toBe(2.5);
-    expect(h._startTimes.size).toBe(0);
+    expect(h._startTimes.size).toBe(1); // only the still-open root run is left
   });
 
   it("langchain: model duration on success and error", () => {
@@ -87,7 +88,7 @@ describe("duration_seconds", () => {
     expect(find(h, "on_tool_end", toolB)["duration_seconds"]).toBe(2);
     expect(find(h, "on_llm_end", model)["duration_seconds"]).toBe(5);
     expect(find(h, "on_tool_end", toolA)["duration_seconds"]).toBe(10);
-    expect(h._startTimes.size).toBe(0);
+    expect(h._startTimes.size).toBe(1); // only the still-open root run is left
   });
 
   it("strands: model and tool durations", async () => {
@@ -115,6 +116,83 @@ describe("duration_seconds", () => {
     }
     for (const kind of ["on_chat_model_start", "on_tool_start"]) {
       for (const e of of(kind)) expect(e).not.toHaveProperty("duration_seconds");
+    }
+    expect(trellarAgent._startTimes.size).toBe(0);
+  });
+});
+
+describe("total_duration_seconds (only on the event that ends the root run)", () => {
+  const chainStart = (h: LangchainAgentCallback, id: string, parent?: string) =>
+    h.handleChainStart({ name: "n" }, { messages: [] }, id, parent, [], {}, undefined, "n");
+
+  it("langchain graph: total on root chain end only", async () => {
+    const h = new LangchainAgentCallback({ agentName: "test-agent" });
+    const [root, node, model, toolId] = [uuid(), uuid(), uuid(), uuid()];
+
+    chainStart(h, root);
+    advance(1);
+    chainStart(h, node, root);
+    h.handleChatModelStart({ name: "gpt" }, [[new HumanMessage("hi")]], model, node);
+    advance(2);
+    h.handleLLMEnd(makeLlmResult({ message: makeAiMessage("ok") }), model, node);
+    h.handleToolStart({ name: "search" }, "{}", toolId, node, [], {}, "search");
+    advance(3);
+    h.handleToolEnd("out", toolId, node);
+    await h.handleChainEnd({ messages: [] }, node, root);
+    advance(4);
+    await h.handleChainEnd({ messages: [] }, root, undefined);
+
+    expect(find(h, "on_chain_end", root)["total_duration_seconds"]).toBe(10);
+    for (const [kind, id] of [["on_chain_end", node], ["on_llm_end", model], ["on_tool_end", toolId]] as const) {
+      expect(find(h, kind, id)).not.toHaveProperty("total_duration_seconds");
+    }
+  });
+
+  it("langchain graph: a failed root run still gets the total", () => {
+    const h = new LangchainAgentCallback({ agentName: "test-agent" });
+    const root = uuid();
+    chainStart(h, root);
+    advance(1.5);
+    h.handleChainError(new Error("boom"), root, undefined);
+
+    expect(find(h, "on_chain_error", root)["total_duration_seconds"]).toBe(1.5);
+  });
+
+  it("single LLM call: total equals duration", async () => {
+    const h = new LangchainSingleCallCallback({ agentName: "test-agent" });
+    const id = uuid();
+    h.handleChatModelStart({ name: "gpt" }, [[new HumanMessage("hi")]], id, undefined);
+    advance(1.5);
+    await h.handleLLMEnd(makeLlmResult({ message: makeAiMessage("ok") }), id, undefined);
+
+    const event = find(h, "on_llm_end", id);
+    expect(event["duration_seconds"]).toBe(1.5);
+    expect(event["total_duration_seconds"]).toBe(1.5);
+  });
+
+  it("strands: total on root chain end only", async () => {
+    const add = tool({
+      name: "add",
+      description: "Add two numbers.",
+      inputSchema: z.object({ a: z.number(), b: z.number() }),
+      callback: ({ a, b }) => a + b,
+    });
+    const trellarAgent = trellarStrandsAgent("t");
+    await new Agent({
+      id: "calc-total",
+      name: "calc",
+      model: new FakeModel([{ toolUse: { name: "add", input: { a: 1, b: 2 } } }, { text: "3" }]),
+      tools: [add],
+      plugins: [trellarAgent],
+      printer: false,
+    }).invoke("1+2?");
+
+    const rootEnds = trellarAgent.events.filter((e) => e["event"] === "on_chain_end");
+    expect(rootEnds).toHaveLength(1);
+    const stepDurations = trellarAgent.events.map((e) => e["duration_seconds"]).filter((d): d is number => typeof d === "number");
+    expect(rootEnds[0]!["total_duration_seconds"]).toBeGreaterThanOrEqual(Math.max(...stepDurations));
+    for (const e of trellarAgent.events.filter((e) => e !== rootEnds[0])) {
+      expect(e).not.toHaveProperty("total_duration_seconds");
     }
     expect(trellarAgent._startTimes.size).toBe(0);
   });

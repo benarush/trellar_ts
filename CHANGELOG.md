@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `duration_seconds` on model and tool end/error events (`on_llm_end`, `on_llm_error`,
   `on_tool_end`, `on_tool_error`) for both LangChain and Strands: how long the call took,
   in seconds.
+- `total_duration_seconds` on the event that ends the root run (`on_chain_end` /
+  `on_chain_error`, or `on_llm_end` / `on_llm_error` for a bare single LLM call), for both
+  LangChain and Strands: wall time of the whole run, in seconds.
 
 ## [0.7.1] - 2026-10-18
 

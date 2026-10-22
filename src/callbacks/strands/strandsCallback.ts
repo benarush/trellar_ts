@@ -188,6 +188,7 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     if (this._rootRunId === null) {
       // First run: this is the root. Reset state and become the active Trellar agent.
       this._reset(runId);
+      markStart(this._startTimes, runId); // for total_duration_seconds
       parent = null;
       activateTrellarAgent(this);
       enterScope({ trellarAgent: this });
@@ -203,13 +204,21 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
   _endChain(runId: string, name: string | undefined, outputs: unknown): void {
     this._pendingInputEvents.delete(runId);
     const parent = this._parents.get(runId) ?? null;
-    this._record("on_chain_end", runId, parent, name, "chain", { outputs });
+    this._record("on_chain_end", runId, parent, name, "chain", { outputs, ...this._rootTotal(runId) });
+  }
+
+  /** ``total_duration_seconds`` extra, only for the event that ends the root run. */
+  _rootTotal(runId: string): Obj {
+    return runId === this._rootRunId ? { total_duration_seconds: popElapsed(this._startTimes, runId) } : {};
   }
 
   _errorChain(runId: string, name: string | undefined, error: unknown): void {
     this._pendingInputEvents.delete(runId);
     const parent = this._parents.get(runId) ?? null;
-    this._record("on_chain_error", runId, parent, name, "chain", { error: errorText(error) });
+    this._record("on_chain_error", runId, parent, name, "chain", {
+      error: errorText(error),
+      ...this._rootTotal(runId),
+    });
   }
 
   /** Fill in a chain's ``inputs`` once the framework exposes the text (it is not known when the Before* hook fires). */

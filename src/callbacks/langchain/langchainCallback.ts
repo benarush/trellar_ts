@@ -70,6 +70,9 @@ function lastOf(id: unknown): string | undefined {
  *   provider reported none), on ``on_llm_end`` events.
  * - ``duration_seconds`` -- seconds the model/tool call took, on the ``*_end`` / ``*_error``
  *   events of LLM and tool runs.
+ * - ``total_duration_seconds`` -- seconds the whole run took, only on the event that ends
+ *   the root run (``on_chain_end`` / ``on_chain_error``, or ``on_llm_end`` / ``on_llm_error``
+ *   for a bare single LLM call).
  */
 export class LangchainAgentCallback extends BaseCallbackHandler implements TrellarAgentState {
   name = "trellar_langchain_agent";
@@ -370,6 +373,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
       ? (llmOutput["token_usage"] ?? llmOutput["tokenUsage"])
       : (llmOutput["usage"] ?? null);
     const { input: inputTokens, output: outputTokens } = extractTokenCounts(usageMetadata, llmOutput);
+    const duration = popElapsed(this._startTimes, runId);
 
     // Fold tool calls into the response text so the payload keeps its original
     // shape ({"response": <str>}). The matching tool results are appended
@@ -389,7 +393,8 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
       token_usage: tokenUsage,
       input_tokens: inputTokens,
       output_tokens: outputTokens,
-      duration_seconds: popElapsed(this._startTimes, runId),
+      duration_seconds: duration,
+      ...rootTotal(parentRunId, duration),
     });
 
     if (toolCalls.length > 0) {
@@ -406,9 +411,11 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
   }
 
   override handleLLMError(error: unknown, runId: string, parentRunId?: string): void {
+    const duration = popElapsed(this._startTimes, runId);
     this._record("on_llm_error", runId, parentRunId, {
       error: errorText(error),
-      duration_seconds: popElapsed(this._startTimes, runId),
+      duration_seconds: duration,
+      ...rootTotal(parentRunId, duration),
     });
   }
 
@@ -536,6 +543,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
       // top-level graph.invoke() (sequentially), drop state from the previous
       // run instead of letting it accumulate unbounded.
       this._resetForNewRun(runId);
+      markStart(this._startTimes, runId); // for total_duration_seconds
     }
 
     const chainName = runName || (chain?.["name"] as string | undefined) || lastOf(chain?.["id"]);
@@ -578,7 +586,10 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
         messages: LangchainAgentCallback.serializeMessages(toArray((out as Obj)["messages"])),
       };
     }
-    this._record("on_chain_end", runId, parentRunId, { outputs: toJsonableEvent(out) });
+    this._record("on_chain_end", runId, parentRunId, {
+      outputs: toJsonableEvent(out),
+      ...rootTotal(parentRunId, popElapsed(this._startTimes, runId)),
+    });
     if (parentRunId === undefined || parentRunId === null) {
       // Root run ending -- the whole graph flow has reached its end.
       await this._maybeAutoEvaluate();
@@ -605,7 +616,10 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
   }
 
   override handleChainError(error: unknown, runId: string, parentRunId?: string): void {
-    this._record("on_chain_error", runId, parentRunId, { error: errorText(error) });
+    this._record("on_chain_error", runId, parentRunId, {
+      error: errorText(error),
+      ...rootTotal(parentRunId, popElapsed(this._startTimes, runId)),
+    });
     if (parentRunId === undefined || parentRunId === null) {
       // Root run failing -- handleChainEnd will never fire for this runId
       // (they are mutually exclusive), so release the slot here too.
@@ -631,6 +645,11 @@ function toArray(value: unknown): unknown[] {
 function errorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+/** ``total_duration_seconds`` extra, only for the event that ends the root run. */
+function rootTotal(parentRunId: string | undefined | null, seconds: number | null): Obj {
+  return parentRunId === undefined || parentRunId === null ? { total_duration_seconds: seconds } : {};
 }
 
 /**
