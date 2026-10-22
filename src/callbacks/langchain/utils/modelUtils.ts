@@ -39,3 +39,33 @@ export function extractModelName(
   if (Array.isArray(id) && id.length > 0) return str(id[id.length - 1]);
   return undefined;
 }
+
+function firstNumber(source: Obj, ...keys: string[]): number | null {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+/**
+ * ``{ input, output }`` token counts for one model call; ``null`` when unreported.
+ *
+ * ``AIMessage.usage_metadata`` (the LangChain standard) wins; otherwise fall back
+ * to ``llmOutput.token_usage`` / ``tokenUsage`` / ``usage``, which use
+ * ``prompt_tokens``/``promptTokens`` + ``completion_tokens``/``completionTokens``
+ * (OpenAI) or ``input_tokens`` + ``output_tokens`` (Anthropic).
+ */
+export function extractTokenCounts(
+  usageMetadata: unknown,
+  llmOutput: unknown,
+): { input: number | null; output: number | null } {
+  const out = asObj(llmOutput);
+  for (const source of [usageMetadata, out["token_usage"], out["tokenUsage"], out["usage"]]) {
+    const usage = asObj(source);
+    const input = firstNumber(usage, "input_tokens", "prompt_tokens", "promptTokens");
+    const output = firstNumber(usage, "output_tokens", "completion_tokens", "completionTokens");
+    if (input !== null || output !== null) return { input, output };
+  }
+  return { input: null, output: null };
+}

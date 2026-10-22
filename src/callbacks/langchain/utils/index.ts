@@ -6,5 +6,5 @@ export {
   stringifyUnknown,
   type LlmInput,
 } from "./messageUtils.js";
-export { extractModelName } from "./modelUtils.js";
+export { extractModelName, extractTokenCounts } from "./modelUtils.js";
 export { normalizeTools, findToolDescription } from "./toolUtils.js";

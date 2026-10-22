@@ -44,6 +44,8 @@ const onLlmEnd = z.object({
   event: z.literal("on_llm_end"),
   output: llmOutput,
   token_usage: z.any().optional(),
+  input_tokens: z.number().int().nullable().optional(),
+  output_tokens: z.number().int().nullable().optional(),
 });
 const onToolStart = z.object({
   ...base,

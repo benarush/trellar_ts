@@ -9,11 +9,12 @@ import {
   releaseTrellarAgent,
 } from "../../context.js";
 import { logger } from "../../logger.js";
-import { buildContext, compactJson, hashTools, pyJsonDumps } from "../common.js";
+import { buildContext, compactJson, hashTools, markStart, popElapsed, pyJsonDumps } from "../common.js";
 import {
   contentToStr,
   extractLlmInput,
   extractModelName,
+  extractTokenCounts,
   findToolDescription,
   isMessageLike,
   normalizeTools,
@@ -65,6 +66,13 @@ function lastOf(id: unknown): string | undefined {
  * - ``node_type``     -- ``"llm"``, ``"tool"``, or ``"chain"``
  * - extra payload fields depending on the event type, notably ``is_mcp_tool``
  *   (boolean) on ``on_tool_end`` events -- see ``isMcpToolRun``.
+ * - ``input_tokens`` / ``output_tokens`` -- tokens the model call used (``null`` if the
+ *   provider reported none), on ``on_llm_end`` events.
+ * - ``duration_seconds`` -- seconds the model/tool call took, on the ``*_end`` / ``*_error``
+ *   events of LLM and tool runs.
+ * - ``total_duration_seconds`` -- seconds the whole run took, only on the event that ends
+ *   the root run (``on_chain_end`` / ``on_chain_error``, or ``on_llm_end`` / ``on_llm_error``
+ *   for a bare single LLM call).
  */
 export class LangchainAgentCallback extends BaseCallbackHandler implements TrellarAgentState {
   name = "trellar_langchain_agent";
@@ -97,6 +105,8 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
   _evaluated = false;
   /** run_id -> {name, type, mcp} */
   _runRegistry = new Map<string, { name: string | null | undefined; type: string; mcp?: boolean }>();
+  /** run_id -> performance.now() at model/tool start, for ``duration_seconds`` */
+  _startTimes = new Map<string, number>();
   /**
    * LLM events that requested tool calls and are still awaiting the
    * corresponding tool outputs.
@@ -258,6 +268,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     this.events = [];
     this._step = 0;
     this._runRegistry = new Map();
+    this._startTimes = new Map();
     this._pendingLlmToolCalls = [];
     this.availableTools = {};
     this._evaluated = false;
@@ -278,6 +289,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
   ): void {
     const model = extractModelName(llm, extraParams?.["invocation_params"]);
     this._register(runId, model, "llm");
+    markStart(this._startTimes, runId);
     this._record("on_llm_start", runId, parentRunId, {
       model: model ?? null,
       input: { system: null, human: prompts.join("\n") },
@@ -304,6 +316,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
       }
     }
     this._register(runId, model, "llm");
+    markStart(this._startTimes, runId);
 
     // messages is BaseMessage[][] -- one inner list per prompt batch item.
     // Use the first batch to extract system/human fields.
@@ -323,6 +336,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     //   - Gemini multimodal content (list of parts -- serialise to JSON)
     let responseText = "";
     let toolCalls: any[] = [];
+    let usageMetadata: unknown;
     const generations = response?.["generations"];
     if (Array.isArray(generations) && generations.length > 0) {
       const firstBatch = generations[0];
@@ -333,6 +347,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
         let message = gen?.["message"] as Obj | null | undefined;
         if (message !== null && message !== undefined) {
           toolCalls = (message["tool_calls"] as any[] | undefined) || [];
+          usageMetadata = message["usage_metadata"];
           const content = message["content"];
           if (content !== null && content !== undefined) {
             responseText = contentToStr(content);
@@ -357,6 +372,8 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     const tokenUsage = truthy(llmOutput["token_usage"] ?? llmOutput["tokenUsage"])
       ? (llmOutput["token_usage"] ?? llmOutput["tokenUsage"])
       : (llmOutput["usage"] ?? null);
+    const { input: inputTokens, output: outputTokens } = extractTokenCounts(usageMetadata, llmOutput);
+    const duration = popElapsed(this._startTimes, runId);
 
     // Fold tool calls into the response text so the payload keeps its original
     // shape ({"response": <str>}). The matching tool results are appended
@@ -374,6 +391,10 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     this._record("on_llm_end", runId, parentRunId, {
       output: { response: responseText },
       token_usage: tokenUsage,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      duration_seconds: duration,
+      ...rootTotal(parentRunId, duration),
     });
 
     if (toolCalls.length > 0) {
@@ -390,7 +411,12 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
   }
 
   override handleLLMError(error: unknown, runId: string, parentRunId?: string): void {
-    this._record("on_llm_error", runId, parentRunId, { error: errorText(error) });
+    const duration = popElapsed(this._startTimes, runId);
+    this._record("on_llm_error", runId, parentRunId, {
+      error: errorText(error),
+      duration_seconds: duration,
+      ...rootTotal(parentRunId, duration),
+    });
   }
 
   // ------------------------------------------------------------------
@@ -412,6 +438,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
       (toolName ? this._registeredToolDescriptions.get(toolName) : undefined) ||
       findToolDescription(this.availableTools, toolName);
     this._register(runId, toolName, "tool", { mcp: LangchainAgentCallback.isMcpToolRun(metadata, undefined) });
+    markStart(this._startTimes, runId);
 
     // The parsed argument dict, when the input is JSON (LangChain JS passes the
     // arguments as a JSON string).
@@ -441,7 +468,11 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     const registered = this._runRegistry.get(runId);
     const isMcpTool = Boolean(registered?.mcp) || LangchainAgentCallback.isMcpToolRun(undefined, output);
     const serializedOutput = LangchainAgentCallback.serializeMessageObj(output);
-    this._record("on_tool_end", runId, parentRunId, { output: serializedOutput, is_mcp_tool: isMcpTool });
+    this._record("on_tool_end", runId, parentRunId, {
+      output: serializedOutput,
+      is_mcp_tool: isMcpTool,
+      duration_seconds: popElapsed(this._startTimes, runId),
+    });
     this._attachToolResponseToLlm(registered?.name ?? undefined, serializedOutput, parentRunId);
   }
 
@@ -484,7 +515,10 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
   }
 
   override handleToolError(error: unknown, runId: string, parentRunId?: string): void {
-    this._record("on_tool_error", runId, parentRunId, { error: errorText(error) });
+    this._record("on_tool_error", runId, parentRunId, {
+      error: errorText(error),
+      duration_seconds: popElapsed(this._startTimes, runId),
+    });
   }
 
   // ------------------------------------------------------------------
@@ -509,6 +543,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
       // top-level graph.invoke() (sequentially), drop state from the previous
       // run instead of letting it accumulate unbounded.
       this._resetForNewRun(runId);
+      markStart(this._startTimes, runId); // for total_duration_seconds
     }
 
     const chainName = runName || (chain?.["name"] as string | undefined) || lastOf(chain?.["id"]);
@@ -551,7 +586,10 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
         messages: LangchainAgentCallback.serializeMessages(toArray((out as Obj)["messages"])),
       };
     }
-    this._record("on_chain_end", runId, parentRunId, { outputs: toJsonableEvent(out) });
+    this._record("on_chain_end", runId, parentRunId, {
+      outputs: toJsonableEvent(out),
+      ...rootTotal(parentRunId, popElapsed(this._startTimes, runId)),
+    });
     if (parentRunId === undefined || parentRunId === null) {
       // Root run ending -- the whole graph flow has reached its end.
       await this._maybeAutoEvaluate();
@@ -578,7 +616,10 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
   }
 
   override handleChainError(error: unknown, runId: string, parentRunId?: string): void {
-    this._record("on_chain_error", runId, parentRunId, { error: errorText(error) });
+    this._record("on_chain_error", runId, parentRunId, {
+      error: errorText(error),
+      ...rootTotal(parentRunId, popElapsed(this._startTimes, runId)),
+    });
     if (parentRunId === undefined || parentRunId === null) {
       // Root run failing -- handleChainEnd will never fire for this runId
       // (they are mutually exclusive), so release the slot here too.
@@ -604,6 +645,11 @@ function toArray(value: unknown): unknown[] {
 function errorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+/** ``total_duration_seconds`` extra, only for the event that ends the root run. */
+function rootTotal(parentRunId: string | undefined | null, seconds: number | null): Obj {
+  return parentRunId === undefined || parentRunId === null ? { total_duration_seconds: seconds } : {};
 }
 
 /**
