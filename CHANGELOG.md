@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-23
+
 ### Added
 - `input_tokens` and `output_tokens` on `on_llm_end` events for both LangChain and Strands
   (`null` when the provider reports no usage). The existing `token_usage` field is
@@ -75,7 +77,8 @@ callbacks, same events and text formats, and the same payload sent to
 - ESM + CommonJS builds with type declarations; Node.js 20, 22, 24 and 26
   (Strands: Node.js 22+).
 
-[Unreleased]: https://github.com/benarush/trellar_ts/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/benarush/trellar_ts/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/benarush/trellar_ts/releases/tag/v0.8.0
 [0.7.1]: https://github.com/benarush/trellar_ts/releases/tag/v0.7.1
 [0.7.0]: https://github.com/benarush/trellar_ts/releases/tag/v0.7.0
 [0.6.1]: https://github.com/benarush/trellar_ts/releases/tag/v0.6.1
