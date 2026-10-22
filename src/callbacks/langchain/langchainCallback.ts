@@ -9,7 +9,7 @@ import {
   releaseTrellarAgent,
 } from "../../context.js";
 import { logger } from "../../logger.js";
-import { buildContext, compactJson, hashTools, markStart, popElapsed, pyJsonDumps } from "../common.js";
+import { buildContext, compactJson, elapsedSince, hashTools, markStart, popElapsed, pyJsonDumps } from "../common.js";
 import {
   contentToStr,
   extractLlmInput,
@@ -70,9 +70,9 @@ function lastOf(id: unknown): string | undefined {
  *   provider reported none), on ``on_llm_end`` events.
  * - ``duration_seconds`` -- seconds the model/tool call took, on the ``*_end`` / ``*_error``
  *   events of LLM and tool runs.
- * - ``total_duration_seconds`` -- seconds the whole run took, only on the event that ends
- *   the root run (``on_chain_end`` / ``on_chain_error``, or ``on_llm_end`` / ``on_llm_error``
- *   for a bare single LLM call).
+ *
+ * The whole-run duration is not an event field: it is exposed by ``totalDurationSeconds()``
+ * and sent at the top level of the payload.
  */
 export class LangchainAgentCallback extends BaseCallbackHandler implements TrellarAgentState {
   name = "trellar_langchain_agent";
@@ -107,6 +107,8 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
   _runRegistry = new Map<string, { name: string | null | undefined; type: string; mcp?: boolean }>();
   /** run_id -> performance.now() at model/tool start, for ``duration_seconds`` */
   _startTimes = new Map<string, number>();
+  /** When the current root run started (``performance.now()``); feeds the payload's total. */
+  _rootStartedAt: number | null = null;
   /**
    * LLM events that requested tool calls and are still awaiting the
    * corresponding tool outputs.
@@ -262,6 +264,11 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     return toJsonableEvent(value);
   }
 
+  /** Seconds since the root run started (``null`` if none has started). */
+  totalDurationSeconds(): number | null {
+    return elapsedSince(this._rootStartedAt);
+  }
+
   /** Reset per-root-run state (Python: the ``parent_run_id is None`` block of on_chain_start). */
   _resetForNewRun(runId: string): void {
     this.traceId = runId;
@@ -269,6 +276,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     this._step = 0;
     this._runRegistry = new Map();
     this._startTimes = new Map();
+    this._rootStartedAt = performance.now();
     this._pendingLlmToolCalls = [];
     this.availableTools = {};
     this._evaluated = false;
@@ -394,7 +402,6 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
       input_tokens: inputTokens,
       output_tokens: outputTokens,
       duration_seconds: duration,
-      ...rootTotal(parentRunId, duration),
     });
 
     if (toolCalls.length > 0) {
@@ -415,7 +422,6 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     this._record("on_llm_error", runId, parentRunId, {
       error: errorText(error),
       duration_seconds: duration,
-      ...rootTotal(parentRunId, duration),
     });
   }
 
@@ -543,7 +549,6 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
       // top-level graph.invoke() (sequentially), drop state from the previous
       // run instead of letting it accumulate unbounded.
       this._resetForNewRun(runId);
-      markStart(this._startTimes, runId); // for total_duration_seconds
     }
 
     const chainName = runName || (chain?.["name"] as string | undefined) || lastOf(chain?.["id"]);
@@ -588,7 +593,6 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     }
     this._record("on_chain_end", runId, parentRunId, {
       outputs: toJsonableEvent(out),
-      ...rootTotal(parentRunId, popElapsed(this._startTimes, runId)),
     });
     if (parentRunId === undefined || parentRunId === null) {
       // Root run ending -- the whole graph flow has reached its end.
@@ -618,7 +622,6 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
   override handleChainError(error: unknown, runId: string, parentRunId?: string): void {
     this._record("on_chain_error", runId, parentRunId, {
       error: errorText(error),
-      ...rootTotal(parentRunId, popElapsed(this._startTimes, runId)),
     });
     if (parentRunId === undefined || parentRunId === null) {
       // Root run failing -- handleChainEnd will never fire for this runId
@@ -645,11 +648,6 @@ function toArray(value: unknown): unknown[] {
 function errorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
-}
-
-/** ``total_duration_seconds`` extra, only for the event that ends the root run. */
-function rootTotal(parentRunId: string | undefined | null, seconds: number | null): Obj {
-  return parentRunId === undefined || parentRunId === null ? { total_duration_seconds: seconds } : {};
 }
 
 /**

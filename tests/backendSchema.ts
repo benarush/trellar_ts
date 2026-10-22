@@ -93,6 +93,7 @@ export const agentLoopRequest = z.object({
   agent_name: z.string().nullable().optional(),
   observability_call: z.boolean().default(false),
   single_call: z.boolean().optional(),
+  total_duration_seconds: z.number().nullable().optional(),
   available_tools: z
     .array(z.object({ tools_hash: z.string(), tools: z.array(toolSchema) }))
     .default([]),
