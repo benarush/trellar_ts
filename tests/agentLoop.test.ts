@@ -51,6 +51,7 @@ describe("evaluateConfidence request", () => {
       agent_name: "my-agent",
       observability_call: false,
       single_call: false,
+      total_duration_seconds: null, // no root run was started on this hand-built handler
       available_tools: [],
     });
     deactivate(h);

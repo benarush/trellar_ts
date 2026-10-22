@@ -11,6 +11,11 @@ export function markStart(starts: Map<string, number>, runId: string): void {
   starts.set(runId, performance.now());
 }
 
+/** Seconds (3 decimals) since a ``performance.now()`` timestamp; ``null`` if there was none. */
+export function elapsedSince(startedMs: number | null): number | null {
+  return startedMs === null ? null : Math.round(performance.now() - startedMs) / 1000;
+}
+
 /** Seconds (3 decimals) since ``markStart``; deletes the entry. ``null`` if no start was recorded. */
 export function popElapsed(starts: Map<string, number>, runId: string): number | null {
   const t = starts.get(runId);

@@ -42,7 +42,7 @@ import {
   runInScope,
 } from "../../context.js";
 import { logger } from "../../logger.js";
-import { buildContext, compactJson, guardedHook, hashTools, markStart, popElapsed, toJsonable } from "../common.js";
+import { buildContext, compactJson, elapsedSince, guardedHook, hashTools, markStart, popElapsed, toJsonable } from "../common.js";
 import {
   isMcpTool,
   lastAssistantText,
@@ -96,6 +96,8 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
   _parents = new Map<string, string | null>();
   /** model/tool run_id -> performance.now() at start, for ``duration_seconds`` */
   _startTimes = new Map<string, number>();
+  /** When the root run started (``performance.now()``); feeds the payload's total. */
+  _rootStartedAt: number | null = null;
   /** agent -> open invocation run_id */
   _agentRuns = new Map<object, string>();
   /** agent -> open model-call run_id */
@@ -145,6 +147,7 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     this._rootRunId = rootRunId;
     this._parents = new Map();
     this._startTimes = new Map();
+    this._rootStartedAt = null;
     this._agentRuns = new Map();
     this._modelRuns = new Map();
     this._toolRuns = new Map();
@@ -188,7 +191,7 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     if (this._rootRunId === null) {
       // First run: this is the root. Reset state and become the active Trellar agent.
       this._reset(runId);
-      markStart(this._startTimes, runId); // for total_duration_seconds
+      this._rootStartedAt = performance.now();
       parent = null;
       activateTrellarAgent(this);
       enterScope({ trellarAgent: this });
@@ -204,12 +207,12 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
   _endChain(runId: string, name: string | undefined, outputs: unknown): void {
     this._pendingInputEvents.delete(runId);
     const parent = this._parents.get(runId) ?? null;
-    this._record("on_chain_end", runId, parent, name, "chain", { outputs, ...this._rootTotal(runId) });
+    this._record("on_chain_end", runId, parent, name, "chain", { outputs });
   }
 
-  /** ``total_duration_seconds`` extra, only for the event that ends the root run. */
-  _rootTotal(runId: string): Obj {
-    return runId === this._rootRunId ? { total_duration_seconds: popElapsed(this._startTimes, runId) } : {};
+  /** Seconds since the root run started (``null`` if none has started). */
+  totalDurationSeconds(): number | null {
+    return elapsedSince(this._rootStartedAt);
   }
 
   _errorChain(runId: string, name: string | undefined, error: unknown): void {
@@ -217,7 +220,6 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     const parent = this._parents.get(runId) ?? null;
     this._record("on_chain_error", runId, parent, name, "chain", {
       error: errorText(error),
-      ...this._rootTotal(runId),
     });
   }
 

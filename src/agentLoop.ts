@@ -117,6 +117,9 @@ export async function evaluateWithTrellarAgent(
     agent_name: trellarAgent.agentName,
     observability_call: _observabilityCall,
     single_call: trellarAgent.isSingleCall ?? false,
+    // Wall time from the root run's start until now: the full run when auto-evaluated
+    // at the end, "so far" for a manual mid-run call.
+    total_duration_seconds: trellarAgent.totalDurationSeconds?.() ?? null,
     // One entry per distinct toolset bound during this run, keyed by a
     // content hash (not the model name) so the backend can correlate it
     // back to the exact SubAgent that declared it.

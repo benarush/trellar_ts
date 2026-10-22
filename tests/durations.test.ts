@@ -8,9 +8,12 @@ import { Agent, tool } from "@strands-agents/sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
+import { ObservabilityMode, evaluateConfidence } from "../src/agentLoop.js";
 import { LangchainAgentCallback } from "../src/callbacks/langchain/langchainCallback.js";
 import { LangchainSingleCallCallback } from "../src/callbacks/langchain/singleLangchainCallback.js";
 import { trellarStrandsAgent } from "../src/strands.js";
+import { releaseTrellarAgent, runWithTrellarAgent } from "../src/context.js";
+import { assertValidAgentLoopRequest, mockFetch, useCleanEnv } from "./helpers.js";
 import { makeAiMessage, makeLlmResult, uuid } from "./factories.js";
 import { FakeModel } from "./strandsFactories.js";
 
@@ -48,7 +51,7 @@ describe("duration_seconds", () => {
 
     expect(find(h, "on_tool_start", id)).not.toHaveProperty("duration_seconds");
     expect(find(h, "on_tool_end", id)["duration_seconds"]).toBe(2.5);
-    expect(h._startTimes.size).toBe(1); // only the still-open root run is left
+    expect(h._startTimes.size).toBe(0);
   });
 
   it("langchain: model duration on success and error", () => {
@@ -88,7 +91,7 @@ describe("duration_seconds", () => {
     expect(find(h, "on_tool_end", toolB)["duration_seconds"]).toBe(2);
     expect(find(h, "on_llm_end", model)["duration_seconds"]).toBe(5);
     expect(find(h, "on_tool_end", toolA)["duration_seconds"]).toBe(10);
-    expect(h._startTimes.size).toBe(1); // only the still-open root run is left
+    expect(h._startTimes.size).toBe(0);
   });
 
   it("strands: model and tool durations", async () => {
@@ -121,12 +124,16 @@ describe("duration_seconds", () => {
   });
 });
 
-describe("total_duration_seconds (only on the event that ends the root run)", () => {
+describe("total_duration_seconds (top level of the payload, not in the events)", () => {
+  useCleanEnv();
   const chainStart = (h: LangchainAgentCallback, id: string, parent?: string) =>
     h.handleChainStart({ name: "n" }, { messages: [] }, id, parent, [], {}, undefined, "n");
+  const noEventHasTotal = (context: Array<Record<string, unknown>>) =>
+    context.every((e) => !("total_duration_seconds" in e));
 
-  it("langchain graph: total on root chain end only", async () => {
-    const h = new LangchainAgentCallback({ agentName: "test-agent" });
+  it("langchain graph: payload total is the full run when auto-evaluated at root end", async () => {
+    const calls = mockFetch();
+    const h = new LangchainAgentCallback({ agentName: "test-agent", observabilityMode: ObservabilityMode.ALWAYS });
     const [root, node, model, toolId] = [uuid(), uuid(), uuid(), uuid()];
 
     chainStart(h, root);
@@ -142,42 +149,48 @@ describe("total_duration_seconds (only on the event that ends the root run)", ()
     advance(4);
     await h.handleChainEnd({ messages: [] }, root, undefined);
 
-    expect(find(h, "on_chain_end", root)["total_duration_seconds"]).toBe(10);
-    for (const [kind, id] of [["on_chain_end", node], ["on_llm_end", model], ["on_tool_end", toolId]] as const) {
-      expect(find(h, kind, id)).not.toHaveProperty("total_duration_seconds");
-    }
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.body.total_duration_seconds).toBe(10);
+    expect(noEventHasTotal(calls[0]!.body.context)).toBe(true);
+    assertValidAgentLoopRequest(calls[0]!.body);
   });
 
-  it("langchain graph: a failed root run still gets the total", () => {
+  it("langchain graph: payload total is elapsed-so-far for a manual mid-run evaluate", async () => {
+    const calls = mockFetch();
     const h = new LangchainAgentCallback({ agentName: "test-agent" });
-    const root = uuid();
-    chainStart(h, root);
-    advance(1.5);
-    h.handleChainError(new Error("boom"), root, undefined);
+    chainStart(h, uuid());
+    advance(3);
+    try {
+      await runWithTrellarAgent(h, () => evaluateConfidence({ apiKey: "k" })); // earlier tests leave roots open
+    } finally {
+      releaseTrellarAgent(h);
+    }
 
-    expect(find(h, "on_chain_error", root)["total_duration_seconds"]).toBe(1.5);
+    expect(calls[0]!.body.total_duration_seconds).toBe(3);
   });
 
-  it("single LLM call: total equals duration", async () => {
-    const h = new LangchainSingleCallCallback({ agentName: "test-agent" });
+  it("single LLM call: payload total equals the call duration", async () => {
+    const calls = mockFetch();
+    const h = new LangchainSingleCallCallback({ agentName: "test-agent", observabilityMode: ObservabilityMode.ALWAYS });
     const id = uuid();
     h.handleChatModelStart({ name: "gpt" }, [[new HumanMessage("hi")]], id, undefined);
     advance(1.5);
     await h.handleLLMEnd(makeLlmResult({ message: makeAiMessage("ok") }), id, undefined);
 
-    const event = find(h, "on_llm_end", id);
-    expect(event["duration_seconds"]).toBe(1.5);
-    expect(event["total_duration_seconds"]).toBe(1.5);
+    const body = calls[0]!.body;
+    expect(body.total_duration_seconds).toBe(1.5);
+    expect(body.context.at(-1).duration_seconds).toBe(1.5);
   });
 
-  it("strands: total on root chain end only", async () => {
+  it("strands: payload total covers the agent run", async () => {
+    const calls = mockFetch();
     const add = tool({
       name: "add",
       description: "Add two numbers.",
       inputSchema: z.object({ a: z.number(), b: z.number() }),
       callback: ({ a, b }) => a + b,
     });
-    const trellarAgent = trellarStrandsAgent("t");
+    const trellarAgent = trellarStrandsAgent("t", ObservabilityMode.ALWAYS);
     await new Agent({
       id: "calc-total",
       name: "calc",
@@ -187,13 +200,12 @@ describe("total_duration_seconds (only on the event that ends the root run)", ()
       printer: false,
     }).invoke("1+2?");
 
-    const rootEnds = trellarAgent.events.filter((e) => e["event"] === "on_chain_end");
-    expect(rootEnds).toHaveLength(1);
-    const stepDurations = trellarAgent.events.map((e) => e["duration_seconds"]).filter((d): d is number => typeof d === "number");
-    expect(rootEnds[0]!["total_duration_seconds"]).toBeGreaterThanOrEqual(Math.max(...stepDurations));
-    for (const e of trellarAgent.events.filter((e) => e !== rootEnds[0])) {
-      expect(e).not.toHaveProperty("total_duration_seconds");
-    }
-    expect(trellarAgent._startTimes.size).toBe(0);
+    expect(calls).toHaveLength(1);
+    const { body } = calls[0]!;
+    const stepDurations = body.context
+      .map((e: Record<string, unknown>) => e["duration_seconds"])
+      .filter((d: unknown): d is number => typeof d === "number");
+    expect(body.total_duration_seconds).toBeGreaterThanOrEqual(Math.max(...stepDurations));
+    expect(noEventHasTotal(body.context)).toBe(true);
   });
 });
