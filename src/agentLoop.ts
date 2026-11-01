@@ -1,5 +1,6 @@
 import { type TrellarAgentState, resolveActiveTrellarAgent } from "./context.js";
 import * as settings from "./settings.js";
+import { checkTags, type Tags } from "./tags.js";
 
 /** Result of one ``evaluateConfidence()`` call. */
 export interface AgentLoopResult {
@@ -74,6 +75,8 @@ export interface EvaluateConfidenceOptions {
   apiKey?: string;
   /** HTTP request timeout in seconds (default 30). */
   timeout?: number;
+  /** Flat labels for this call, merged on top of the creation tags (this call wins). */
+  tags?: Tags;
   /**
    * Internal -- set by the Trellar agent's auto-trigger (see ``ObservabilityMode``) to
    * mark the request as automatic rather than a manual call. Not for external use.
@@ -92,7 +95,8 @@ export async function evaluateWithTrellarAgent(
   trellarAgent: TrellarAgentState,
   options: EvaluateConfidenceOptions = {},
 ): Promise<AgentLoopResult> {
-  const { apiKey, timeout = 30.0, _observabilityCall = false } = options;
+  const { apiKey, timeout = 30.0, tags, _observabilityCall = false } = options;
+  const mergedTags = { ...(trellarAgent.tags ?? {}), ...checkTags(tags) };
 
   if (!trellarAgent.traceId) {
     throw new Error(
@@ -127,6 +131,8 @@ export async function evaluateWithTrellarAgent(
       tools_hash: toolsHash,
       tools,
     })),
+    // Creation-time tags + this call's tags (this call wins on a same key).
+    tags: mergedTags,
   };
 
   const response = await fetch(url, {

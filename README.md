@@ -241,13 +241,14 @@ const result = await evaluateConfidence(); // apiKey read from the env var
 ### `trellarLangchainAgent` (`trellar/langchain`)
 
 ```ts
-trellarLangchainAgent(agentName: string, observabilityMode?: ObservabilityMode): LangchainAgentCallback
+trellarLangchainAgent(agentName: string, observabilityMode?: ObservabilityMode, tags?: Tags): LangchainAgentCallback
 ```
 
 | Parameter | Type | Description |
 |---|---|---|
 | `agentName` | `string` | Stable, unique name identifying this agent graph (e.g. `"research-agent"`) |
 | `observabilityMode` | `ObservabilityMode` | Controls whether `evaluateConfidence()` is auto-triggered when the graph run finishes. Default `ObservabilityMode.NONE`. |
+| `tags` | `Tags` | Flat labels attached to every decision record, e.g. `{ customer_id: 5, topic: "billing" }`. See [Tags](#tags). |
 
 Returns a LangChain callback handler bound to `agentName`. Pass it to `graph.invoke(input, { callbacks: [trellarAgent] })`.
 
@@ -279,7 +280,7 @@ Requests triggered this way are marked in the payload with `observability_call: 
 ### `trellarLangchainSingleCall` (`trellar/langchain`)
 
 ```ts
-trellarLangchainSingleCall(agentName: string, observabilityMode?: ObservabilityMode): LangchainSingleCallCallback
+trellarLangchainSingleCall(agentName: string, observabilityMode?: ObservabilityMode, tags?: Tags): LangchainSingleCallCallback
 ```
 
 Use this instead of `trellarLangchainAgent` when you are calling a chat model directly (`llm.invoke(...)`) with no wrapping LangGraph/chain. Agents built with `createAgent` are already compiled graphs under the hood, so they work with `trellarLangchainAgent` as usual.
@@ -301,13 +302,14 @@ Requests made through this Trellar agent are marked in the payload with `single_
 ### `evaluateConfidence`
 
 ```ts
-evaluateConfidence(options?: { apiKey?: string; timeout?: number }): Promise<AgentLoopResult>
+evaluateConfidence(options?: { apiKey?: string; timeout?: number; tags?: Tags }): Promise<AgentLoopResult>
 ```
 
 | Option | Type | Description |
 |---|---|---|
 | `apiKey` | `string` | Bearer token. Falls back to `TRELLAR_API_KEY` |
 | `timeout` | `number` | HTTP request timeout in seconds (default `30`) |
+| `tags` | `Tags` | Flat labels for this call, merged on top of the tags given at creation (same key: this call wins). See [Tags](#tags). |
 
 `context`, `trace_id`, and `agent_name` are resolved automatically from the active Trellar agent — there is no way to pass them manually. Requests always go to `https://api.trellar.io`; callers cannot redirect them.
 
@@ -315,6 +317,22 @@ evaluateConfidence(options?: { apiKey?: string; timeout?: number }): Promise<Age
 - `Error` — if no active Trellar agent is found, its trace id cannot be resolved, or the API key is missing
 - `TrellarHTTPError` — on non-2xx HTTP responses (`status`, `statusText`, `url`, `body`)
 - `NetworkHaltedError` — when the backend signals the run should stop (`shouldStopNetwork`)
+
+### Tags
+
+Tags are flat key/value labels stored on each decision record, so you can later filter and group decisions (by customer, topic, environment, ...).
+
+```ts
+const trellarAgent = trellarLangchainAgent("support-bot", ObservabilityMode.NONE, { env: "prod", topic: "billing" });
+
+async function confidenceGate(state) {
+  return evaluateConfidence({ tags: { customer_id: state.customerId } });
+}
+```
+
+- `Tags` is `Record<string, string | number | boolean>`; the same `tags` argument is accepted by all four `trellar*` factories.
+- Every value is converted with `String()` before it is sent (`true` becomes `"true"`), so `5` and `"5"` are the same tag. Keep values flat.
+- At most 20 tags per call; keys are 1-64 characters from `A-Z a-z 0-9 _ . -`; values are 1-200 characters. A request that breaks these limits is rejected by the backend.
 
 ### `AgentLoopResult`
 

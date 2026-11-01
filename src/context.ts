@@ -28,6 +28,8 @@ export interface TrellarAgentState {
   availableTools: Record<string, unknown[]>;
   /** ``true`` for the single-call Trellar agents (payload ``single_call``). */
   isSingleCall?: boolean;
+  /** Static tags given at creation (merged with per-call tags in the payload). */
+  tags?: Record<string, string>;
   /** Seconds since the root run started (payload ``total_duration_seconds``). */
   totalDurationSeconds?(): number | null;
   /** Whether ``evaluateConfidence()`` already succeeded during this run. */
