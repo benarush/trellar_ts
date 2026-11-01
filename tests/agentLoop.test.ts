@@ -6,6 +6,8 @@ import {
   ObservabilityMode,
   TrellarHTTPError,
 } from "../src/index.js";
+import { trellarLangchainAgent, trellarLangchainSingleCall } from "../src/langchain.js";
+import { trellarStrandsAgent, trellarStrandsSingleCall } from "../src/strands.js";
 import { LangchainSingleCallCallback } from "../src/callbacks/langchain/singleLangchainCallback.js";
 import { activateTrellarAgent, releaseTrellarAgent, runWithTrellarAgent } from "../src/context.js";
 import { assertValidAgentLoopRequest, deactivate, makeActiveHandler, mockFetch, OK_BODY, useCleanEnv } from "./helpers.js";
@@ -53,6 +55,7 @@ describe("evaluateConfidence request", () => {
       single_call: false,
       total_duration_seconds: null, // no root run was started on this hand-built handler
       available_tools: [],
+      tags: {},
     });
     deactivate(h);
   });
@@ -192,5 +195,59 @@ describe("ObservabilityMode", () => {
       IF_NOT_EVALUATED: "if_not_evaluated",
       NONE: "none",
     });
+  });
+});
+
+describe("tags", () => {
+  const run = async (agent: ReturnType<typeof trellarLangchainAgent>, options = {}) => {
+    const calls = mockFetch();
+    agent.traceId = "11111111-1111-4111-8111-111111111111";
+    activateTrellarAgent(agent);
+    try {
+      await evaluateConfidence({ apiKey: "k", ...options });
+    } finally {
+      releaseTrellarAgent(agent);
+    }
+    return calls;
+  };
+
+  it("sends creation tags", async () => {
+    const calls = await run(trellarLangchainAgent("t", ObservabilityMode.NONE, { env: "prod" }));
+    expect(calls[0]!.body.tags).toEqual({ env: "prod" });
+  });
+
+  it("merges per-call tags on top and does not mutate creation tags", async () => {
+    const agent = trellarLangchainAgent("t", ObservabilityMode.NONE, { env: "prod", topic: "a" });
+    const calls = await run(agent, { tags: { topic: "b", customer_id: 5 } });
+    expect(calls[0]!.body.tags).toEqual({ env: "prod", topic: "b", customer_id: "5" });
+    expect(agent.tags).toEqual({ env: "prod", topic: "a" });
+  });
+
+  it.each([
+    ["langchain agent", () => trellarLangchainAgent("t", undefined, { a: 1 })],
+    ["langchain single call", () => trellarLangchainSingleCall("t", undefined, { a: 1 })],
+    ["strands agent", () => trellarStrandsAgent("t", undefined, { a: 1 })],
+    ["strands single call", () => trellarStrandsSingleCall("t", undefined, { a: 1 })],
+  ])("%s factory stores tags", (_name, make) => {
+    expect(make().tags).toEqual({ a: "1" });
+  });
+
+  it.each([
+    ["x", "x"],
+    [5, "5"],
+    [1.5, "1.5"],
+    [true, "true"],
+    [false, "false"],
+  ])("converts %j with String()", (value, expected) => {
+    expect(trellarLangchainAgent("t", undefined, { k: value }).tags).toEqual({ k: expected });
+  });
+
+  it.each([["x"], [["a"]]])("rejects invalid tags shape %j", async (bad) => {
+    expect(() => trellarLangchainAgent("t", undefined, bad as any)).toThrow(TypeError);
+    const calls = mockFetch();
+    const h = makeActiveHandler();
+    await expect(evaluateConfidence({ tags: bad as any })).rejects.toThrow(TypeError);
+    expect(calls).toHaveLength(0);
+    deactivate(h);
   });
 });

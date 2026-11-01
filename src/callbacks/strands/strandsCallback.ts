@@ -42,6 +42,7 @@ import {
   runInScope,
 } from "../../context.js";
 import { logger } from "../../logger.js";
+import { checkTags, type Tags } from "../../tags.js";
 import { buildContext, compactJson, elapsedSince, guardedHook, hashTools, markStart, popElapsed, toJsonable } from "../common.js";
 import {
   isMcpTool,
@@ -120,8 +121,11 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
   /** root / agent chain events whose input text is only known after the hook fired */
   _pendingInputEvents = new Map<string, Obj>();
 
-  constructor(options: { agentName: string; observabilityMode?: ObservabilityMode }) {
-    const { agentName, observabilityMode = ObservabilityMode.NONE } = options;
+  /** Static tags sent with every evaluation of this agent (kept across runs). */
+  readonly tags: Record<string, string>;
+
+  constructor(options: { agentName: string; observabilityMode?: ObservabilityMode; tags?: Tags }) {
+    const { agentName, observabilityMode = ObservabilityMode.NONE, tags } = options;
     if (!agentName || !agentName.trim()) {
       throw new Error(
         "agent_name is required. It uniquely identifies this agent network in the " +
@@ -130,6 +134,7 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     }
     this.agentName = agentName;
     this.observabilityMode = parseObservabilityMode(observabilityMode);
+    this.tags = checkTags(tags);
     this._reset(null);
   }
 

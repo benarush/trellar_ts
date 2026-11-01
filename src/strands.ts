@@ -7,6 +7,7 @@
  * ```
  */
 import { ObservabilityMode } from "./agentLoop.js";
+import type { Tags } from "./tags.js";
 import { deprecatedAlias } from "./deprecation.js";
 import {
   StrandsAgentCallback,
@@ -22,7 +23,7 @@ export {
   type EvaluateConfidenceOptions,
 } from "./agentLoop.js";
 export { runWithTrellarAgent, runWithGuard } from "./context.js";
-export type { StrandsAgentCallback, StrandsSingleCallCallback };
+export type { StrandsAgentCallback, StrandsSingleCallCallback, Tags };
 
 /**
  * Create a plugin that identifies a Strands Agents network to Trellar.
@@ -45,12 +46,14 @@ export type { StrandsAgentCallback, StrandsSingleCallCallback };
  *
  * @param agentName Unique, stable name for this agent network.
  * @param observabilityMode See ``ObservabilityMode``.
+ * @param tags Flat labels attached to every decision record, e.g. ``{ customer_id: 5 }``.
  */
 export function trellarStrandsAgent(
   agentName: string,
   observabilityMode: ObservabilityMode = ObservabilityMode.NONE,
+  tags?: Tags,
 ): StrandsAgentCallback {
-  return new StrandsAgentCallback({ agentName, observabilityMode });
+  return new StrandsAgentCallback({ agentName, observabilityMode, tags });
 }
 
 /**
@@ -75,8 +78,9 @@ export function trellarStrandsAgent(
 export function trellarStrandsSingleCall(
   agentName: string,
   observabilityMode: ObservabilityMode = ObservabilityMode.ALWAYS,
+  tags?: Tags,
 ): StrandsSingleCallCallback {
-  return new StrandsSingleCallCallback({ agentName, observabilityMode });
+  return new StrandsSingleCallCallback({ agentName, observabilityMode, tags });
 }
 
 /** @deprecated Use {@link trellarStrandsAgent}. */

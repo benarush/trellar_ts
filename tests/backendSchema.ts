@@ -97,6 +97,7 @@ export const agentLoopRequest = z.object({
   available_tools: z
     .array(z.object({ tools_hash: z.string(), tools: z.array(toolSchema) }))
     .default([]),
+  tags: z.record(z.string(), z.string()).default({}),
 });
 
 /** Throws with a readable message when ``payload`` would be rejected by the backend. */

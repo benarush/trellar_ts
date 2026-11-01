@@ -6,4 +6,5 @@ export {
   type AgentLoopResult,
   type EvaluateConfidenceOptions,
 } from "./agentLoop.js";
+export type { Tags } from "./tags.js";
 export { runWithTrellarAgent, runWithGuard, type TrellarAgentState, type GuardState } from "./context.js";

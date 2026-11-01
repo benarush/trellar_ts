@@ -1,6 +1,7 @@
 import { type AgentLoopResult, evaluateWithTrellarAgent, ObservabilityMode } from "../../agentLoop.js";
 import { releaseTrellarAgent } from "../../context.js";
 import { logger } from "../../logger.js";
+import type { Tags } from "../../tags.js";
 import { LangchainAgentCallback } from "./langchainCallback.js";
 
 type Obj = Record<string, any>;
@@ -31,7 +32,7 @@ export class LangchainSingleCallCallback extends LangchainAgentCallback {
   trellarEvaluateResult: AgentLoopResult | null = null;
   trellarEvaluateError: unknown = null;
 
-  constructor(options: { agentName: string; observabilityMode?: ObservabilityMode }) {
+  constructor(options: { agentName: string; observabilityMode?: ObservabilityMode; tags?: Tags }) {
     super(options);
   }
 

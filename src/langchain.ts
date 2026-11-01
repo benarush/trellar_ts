@@ -7,6 +7,7 @@
  * ```
  */
 import { ObservabilityMode } from "./agentLoop.js";
+import type { Tags } from "./tags.js";
 import { deprecatedAlias } from "./deprecation.js";
 import { LangchainAgentCallback } from "./callbacks/langchain/langchainCallback.js";
 import { LangchainSingleCallCallback } from "./callbacks/langchain/singleLangchainCallback.js";
@@ -20,7 +21,7 @@ export {
   type EvaluateConfidenceOptions,
 } from "./agentLoop.js";
 export { runWithTrellarAgent, runWithGuard } from "./context.js";
-export type { LangchainAgentCallback, LangchainSingleCallCallback };
+export type { LangchainAgentCallback, LangchainSingleCallCallback, Tags };
 
 /**
  * Create a callback handler that identifies this graph to the Trellar backend.
@@ -49,12 +50,14 @@ export type { LangchainAgentCallback, LangchainSingleCallCallback };
  * @param agentName Unique, stable name for this agent graph.
  * @param observabilityMode Controls whether ``evaluateConfidence()`` is
  *   auto-triggered when the graph run finishes. Defaults to ``ObservabilityMode.NONE``.
+ * @param tags Flat labels attached to every decision record, e.g. ``{ customer_id: 5 }``.
  */
 export function trellarLangchainAgent(
   agentName: string,
   observabilityMode: ObservabilityMode = ObservabilityMode.NONE,
+  tags?: Tags,
 ): LangchainAgentCallback {
-  return new LangchainAgentCallback({ agentName, observabilityMode });
+  return new LangchainAgentCallback({ agentName, observabilityMode, tags });
 }
 
 /**
@@ -80,8 +83,9 @@ export function trellarLangchainAgent(
 export function trellarLangchainSingleCall(
   agentName: string,
   observabilityMode: ObservabilityMode = ObservabilityMode.ALWAYS,
+  tags?: Tags,
 ): LangchainSingleCallCallback {
-  return new LangchainSingleCallCallback({ agentName, observabilityMode });
+  return new LangchainSingleCallCallback({ agentName, observabilityMode, tags });
 }
 
 /** @deprecated Use {@link trellarLangchainAgent}. */

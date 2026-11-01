@@ -9,6 +9,7 @@ import {
   releaseTrellarAgent,
 } from "../../context.js";
 import { logger } from "../../logger.js";
+import { checkTags, type Tags } from "../../tags.js";
 import { buildContext, compactJson, elapsedSince, hashTools, markStart, popElapsed, pyJsonDumps } from "../common.js";
 import {
   contentToStr,
@@ -127,9 +128,12 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
   /** name -> description, supplied via ``registerTools`` (survives across runs). */
   _registeredToolDescriptions = new Map<string, string>();
 
-  constructor(options: { agentName: string; observabilityMode?: ObservabilityMode }) {
+  /** Static tags sent with every evaluation of this agent (kept across runs). */
+  readonly tags: Record<string, string>;
+
+  constructor(options: { agentName: string; observabilityMode?: ObservabilityMode; tags?: Tags }) {
     super();
-    const { agentName, observabilityMode = ObservabilityMode.NONE } = options;
+    const { agentName, observabilityMode = ObservabilityMode.NONE, tags } = options;
     if (!agentName || !agentName.trim()) {
       throw new Error(
         "agent_name is required. It uniquely identifies this agent graph in the " +
@@ -139,6 +143,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     }
     this.agentName = agentName;
     this.observabilityMode = parseObservabilityMode(observabilityMode);
+    this.tags = checkTags(tags);
   }
 
   /**
