@@ -1,4 +1,5 @@
 import { toJsonable } from "../../common.js";
+import { extractReasoning } from "../../utils/index.js";
 
 type Obj = Record<string, any>;
 
@@ -12,6 +13,23 @@ export function modelName(agent: Obj): string {
     name = undefined;
   }
   return String(name || agent["model"]?.constructor?.name || "unknown");
+}
+
+/**
+ * The agent model's reasoning/thinking settings as configured, or ``null``.
+ *
+ * Reads ``agent.model.getConfig()`` (reasoning options sit in its ``params`` /
+ * ``additionalRequestFields``); the provider is inferred from the model class name
+ * and the model id. Never throws; see ``extractReasoning``.
+ */
+export function thinkingConfig(agent: Obj): Obj | null {
+  try {
+    const model = agent["model"];
+    const config = model?.getConfig?.() ?? {};
+    return extractReasoning([config], model?.constructor?.name, modelName(agent));
+  } catch {
+    return null;
+  }
 }
 
 /** Agent's tools in the OpenAI function shape the backend expects. */

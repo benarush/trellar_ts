@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- LangChain and Strands: `on_chat_model_start` / `on_llm_start` events now carry
+  `thinking_config`, the model's reasoning/thinking settings exactly as configured
+  (e.g. `{ thinking: { type: "enabled", budget_tokens: 2000 } }`,
+  `{ reasoning_effort: "high" }`, `{ thinkingConfig: { thinkingBudget: 1024 } }`), or `null`
+  when none are set. Only an allowlist of reasoning keys is read from the model config, so
+  API keys and other settings are never sent. Same design as the Python library: a
+  dispatcher plus one module per provider in `src/callbacks/utils/reasoningExtraction`.
+
 ## [0.8.1] - 2026-11-01
 
 ### Added

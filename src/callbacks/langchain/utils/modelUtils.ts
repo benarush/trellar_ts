@@ -1,3 +1,5 @@
+import { extractReasoning } from "../../utils/index.js";
+
 type Obj = Record<string, unknown>;
 
 function asObj(value: unknown): Obj {
@@ -38,6 +40,27 @@ export function extractModelName(
   const id = ser["id"];
   if (Array.isArray(id) && id.length > 0) return str(id[id.length - 1]);
   return undefined;
+}
+
+/**
+ * The model's reasoning/thinking settings as configured, or ``null``.
+ *
+ * Reads the constructor config (``serialized.kwargs``) and then this call's
+ * ``invocation_params`` (which win, e.g. after ``.bind(...)``). The provider is
+ * inferred from ``serialized.id`` (e.g. ``[..., "ChatAnthropic"]``) and the model
+ * name. Never throws; see ``extractReasoning``.
+ */
+export function extractThinkingConfig(serialized: unknown, invocationParams?: unknown): Obj | null {
+  try {
+    const ser = asObj(serialized);
+    return extractReasoning(
+      [ser["kwargs"], invocationParams],
+      ser["id"] ?? ser["name"],
+      extractModelName(serialized, invocationParams),
+    );
+  } catch {
+    return null;
+  }
 }
 
 function firstNumber(source: Obj, ...keys: string[]): number | null {
