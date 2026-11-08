@@ -15,6 +15,7 @@ import {
   contentToStr,
   extractLlmInput,
   extractModelName,
+  extractThinkingConfig,
   extractTokenCounts,
   findToolDescription,
   isMessageLike,
@@ -305,6 +306,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     markStart(this._startTimes, runId);
     this._record("on_llm_start", runId, parentRunId, {
       model: model ?? null,
+      thinking_config: extractThinkingConfig(llm, extraParams?.["invocation_params"]),
       input: { system: null, human: prompts.join("\n") },
     });
   }
@@ -336,6 +338,7 @@ export class LangchainAgentCallback extends BaseCallbackHandler implements Trell
     const llmInput = extractLlmInput(messages && messages.length > 0 ? messages[0]! : []);
     this._record("on_chat_model_start", runId, parentRunId, {
       model: model ?? null,
+      thinking_config: extractThinkingConfig(llm, invocationParams),
       input: llmInput,
       tools_hash: toolsHash,
     });

@@ -52,6 +52,7 @@ import {
   openaiTools,
   systemPromptText,
   textOfBlocks,
+  thinkingConfig,
 } from "./utils/index.js";
 
 type Obj = Record<string, any>;
@@ -463,6 +464,7 @@ export class StrandsAgentCallback implements Plugin, MultiAgentPlugin, TrellarAg
     markStart(this._startTimes, runId);
     this._record("on_chat_model_start", runId, parent, model, "llm", {
       model,
+      thinking_config: thinkingConfig(agent),
       input: { system: systemPromptText(agent), human: llmHumanInput(agent["messages"]) },
       tools_hash: toolsHash,
     });

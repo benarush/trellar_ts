@@ -32,12 +32,14 @@ const onChatModelStart = z.object({
   input: llmInput,
   model: z.string(),
   tools_hash: z.string().nullable().optional(),
+  thinking_config: z.record(z.string(), z.any()).nullable().optional(),
 });
 const onLlmStart = z.object({
   ...base,
   event: z.literal("on_llm_start"),
   input: llmInput,
   model: z.string().nullable().optional(),
+  thinking_config: z.record(z.string(), z.any()).nullable().optional(),
 });
 const onLlmEnd = z.object({
   ...base,
