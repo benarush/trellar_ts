@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-09
+
 ### Added
 - LangChain and Strands: `on_chat_model_start` / `on_llm_start` events now carry
   `thinking_config`, the model's reasoning/thinking settings exactly as configured
@@ -94,7 +96,8 @@ callbacks, same events and text formats, and the same payload sent to
 - ESM + CommonJS builds with type declarations; Node.js 20, 22, 24 and 26
   (Strands: Node.js 22+).
 
-[Unreleased]: https://github.com/benarush/trellar_ts/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/benarush/trellar_ts/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/benarush/trellar_ts/releases/tag/v0.8.2
 [0.8.1]: https://github.com/benarush/trellar_ts/releases/tag/v0.8.1
 [0.8.0]: https://github.com/benarush/trellar_ts/releases/tag/v0.8.0
 [0.7.1]: https://github.com/benarush/trellar_ts/releases/tag/v0.7.1
