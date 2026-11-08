@@ -45,6 +45,12 @@ describe("providers", () => {
     expect(result).toEqual({ thinking_budget: 1024, include_thoughts: true });
   });
 
+  it("gemini level stored as reasoning_effort by langchain", () => {
+    expect(
+      extractReasoning([{ model: "gemini-3-pro-preview", reasoning_effort: "high" }], "ChatGoogleGenerativeAI"),
+    ).toEqual({ reasoning_effort: "high" });
+  });
+
   it("gemini nested thinking_config from strands params", () => {
     expect(extractReasoning([strandsGeminiConfig()], "GeminiModel", "gemini-2.5-flash")).toEqual({
       thinking_config: { thinking_budget: 512 },

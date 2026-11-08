@@ -14,6 +14,9 @@ export const KEYS = [
   "thinking_level",
   "include_thoughts",
   "thinking_config",
+  // langchain-google-genai stores the thinking level under this name (``thinking_level`` is
+  // only an alias), so a constructor-only config carries it as ``reasoning_effort``.
+  "reasoning_effort",
   "thinkingBudget",
   "thinkingLevel",
   "includeThoughts",
